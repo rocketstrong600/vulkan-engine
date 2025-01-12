@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ash = "0.38.0"
+ash-window = "0.13.0"
+winit = "0.30.8"
