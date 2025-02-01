@@ -14,8 +14,12 @@
       {
         defaultPackage = naersk-lib.buildPackage ./.;
         devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer vulkan-loader vulkan-tools vulkan-validation-layers ];
+          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer vulkan-loader vulkan-validation-layers libxkbcommon];
+          packages = [ vulkan-tools ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
+          shellHook = ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ vulkan-loader libxkbcommon ]}:$LD_LIBRARY_PATH
+          '';
         };
       }
     );

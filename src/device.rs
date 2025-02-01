@@ -1,4 +1,7 @@
-use ash::{vk, Instance};
+use ash::{
+    vk::{self, MemoryHeapFlags},
+    Instance,
+};
 use std::error;
 
 // we dyn box the error in result to make error inference runtime,
@@ -90,6 +93,7 @@ pub fn physical_device_memory_size(
 ) -> u64 {
     let memory_properties =
         unsafe { instance.get_physical_device_memory_properties(*physical_device) };
+
     memory_properties
         .memory_heaps
         .iter()

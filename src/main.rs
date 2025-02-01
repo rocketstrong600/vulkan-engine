@@ -1,7 +1,50 @@
 mod device;
-use ash::{vk, Entry};
+mod gpu;
+use ash::{
+    vk::{self, AccelerationStructureTrianglesDisplacementMicromapNV},
+    Entry,
+};
 use device::{physical_device_memory_size, select_vk_physical_device};
 use std::ffi::CStr;
+
+use winit::{
+    application::ApplicationHandler,
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Window, WindowId},
+};
+
+#[derive(Default)]
+struct App {
+    window: Option<Window>,
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.window = Some(
+            event_loop
+                .create_window(Window::default_attributes())
+                .unwrap(),
+        )
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            WindowEvent::RedrawRequested => {
+                self.window.as_ref().unwrap().request_redraw();
+            }
+            _ => (),
+        }
+    }
+}
 
 fn main() {
     // Load Vulkan Library
@@ -9,7 +52,7 @@ fn main() {
 
     // Handle error option for load
     let entry = match entry_result {
-        Ok(result) => result,
+        Ok(entry) => entry,
         Err(error) => panic!("Failed to load Vulkan: {error:?}"),
     };
 
@@ -68,6 +111,16 @@ fn main() {
         physical_device_memory_size(&physical_device, &instance)
     );
 
+    let event_loop_result = EventLoop::new();
+
+    let event_loop = match event_loop_result {
+        Ok(event_loop) => event_loop,
+        Err(error) => panic!("Failed to Create Vulkan Instance: {error:?}"),
+    };
+
+    event_loop.set_control_flow(ControlFlow::Poll);
+    let mut app = App::default();
+    event_loop.run_app(&mut app);
     //Cleanup vulkan instance
     unsafe { instance.destroy_instance(None) };
 }
