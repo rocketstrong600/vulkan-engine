@@ -1,81 +1,22 @@
-mod device;
 mod gpu;
-use ash::{
-    vk::{self, AccelerationStructureTrianglesDisplacementMicromapNV},
-    Entry,
-};
-use device::{physical_device_memory_size, select_vk_physical_device};
+mod window;
+
+use ash::vk;
+use gpu::device::{physical_device_memory_size, select_vk_physical_device};
+use gpu::VulkanInstance;
 use std::ffi::CStr;
 
-use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowId},
-};
-
-#[derive(Default)]
-struct App {
-    window: Option<Window>,
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.window = Some(
-            event_loop
-                .create_window(Window::default_attributes())
-                .unwrap(),
-        )
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-            WindowEvent::RedrawRequested => {
-                self.window.as_ref().unwrap().request_redraw();
-            }
-            _ => (),
-        }
-    }
-}
+use winit::event_loop::{ControlFlow, EventLoop};
 
 fn main() {
-    // Load Vulkan Library
-    let entry_result = unsafe { Entry::load() };
-
-    // Handle error option for load
-    let entry = match entry_result {
-        Ok(entry) => entry,
-        Err(error) => panic!("Failed to load Vulkan: {error:?}"),
-    };
-
-    // Create Default Struct to get written into by entry. create instance
-    let app_info = vk::ApplicationInfo {
-        api_version: vk::make_api_version(0, 1, 0, 0),
-        ..Default::default()
-    };
-
-    let create_info = vk::InstanceCreateInfo {
-        p_application_info: &app_info,
-        ..Default::default()
-    };
-
-    let instance_result = unsafe { entry.create_instance(&create_info, None) };
-
+    let eng_instance = VulkanInstance::new();
     // Handle error option for instance
-    let instance = match instance_result {
+    let eng_instance = match eng_instance {
         Ok(instance) => instance,
         Err(error) => panic!("Failed to Create Vulkan Instance: {error:?}"),
     };
 
-    let physical_device_result = select_vk_physical_device(&instance);
+    let physical_device_result = select_vk_physical_device(&eng_instance.instance);
 
     let physical_device = match physical_device_result {
         Ok(physical_device) => physical_device,
@@ -83,14 +24,16 @@ fn main() {
     };
 
     let instance_version = unsafe {
-        instance
+        eng_instance
+            .instance
             .get_physical_device_properties(physical_device)
             .api_version
     };
 
     let device_name = unsafe {
         CStr::from_ptr(
-            instance
+            eng_instance
+                .instance
                 .get_physical_device_properties(physical_device)
                 .device_name
                 .as_ptr(),
@@ -108,7 +51,7 @@ fn main() {
     );
     println!(
         "Device Memory: {}MiB",
-        physical_device_memory_size(&physical_device, &instance)
+        physical_device_memory_size(&physical_device, &eng_instance.instance)
     );
 
     let event_loop_result = EventLoop::new();
@@ -119,8 +62,9 @@ fn main() {
     };
 
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App::default();
-    event_loop.run_app(&mut app);
-    //Cleanup vulkan instance
-    unsafe { instance.destroy_instance(None) };
+    let mut app = window::App::default();
+
+    if let Err(error) = event_loop.run_app(&mut app) {
+        panic!("Failed on EventLoop: {error:?}");
+    }
 }
