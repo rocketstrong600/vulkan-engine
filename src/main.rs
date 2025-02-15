@@ -1,15 +1,14 @@
-mod gpu;
-mod window;
-
+mod renderer;
 use ash::vk;
-use gpu::device::{physical_device_memory_size, select_vk_physical_device};
-use gpu::VulkanInstance;
+use renderer::device::{physical_device_memory_size, select_vk_physical_device};
+use renderer::window;
+use renderer::VulkanInstance;
 use std::ffi::CStr;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
 fn main() {
-    let eng_instance = VulkanInstance::new();
+    let eng_instance = VulkanInstance::new(c"test", 0, 1, 0, None);
     // Handle error option for instance
     let eng_instance = match eng_instance {
         Ok(instance) => instance,
@@ -62,7 +61,7 @@ fn main() {
     };
 
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = window::App::default();
+    let mut app = window::WindowLoop::default();
 
     if let Err(error) = event_loop.run_app(&mut app) {
         panic!("Failed on EventLoop: {error:?}");
