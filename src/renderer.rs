@@ -1,9 +1,12 @@
 pub mod device;
-pub mod window;
 
+use crate::renderer::device::VulkanDevice;
+use crate::utils::GameInfo;
 use ash::{vk, Entry, Instance};
 use std::error;
-use std::ffi::{c_char, CStr};
+use std::ffi::c_char;
+use winit::raw_window_handle::HasDisplayHandle;
+use winit::window::Window;
 
 pub const ENGINE_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
@@ -18,10 +21,7 @@ pub struct VulkanInstance {
 #[allow(dead_code)]
 impl VulkanInstance {
     pub fn new(
-        app_name: &CStr,
-        app_major: u32,
-        app_minor: u32,
-        app_patch: u32,
+        game_info: &GameInfo,
         extension_names: Option<&[*const c_char]>,
     ) -> Result<Self, Box<dyn error::Error>> {
         // Load Vulkan Library
@@ -36,8 +36,13 @@ impl VulkanInstance {
 
         let app_info = vk::ApplicationInfo::default()
             .api_version(vk::make_api_version(0, 1, 3, 0))
-            .application_name(app_name)
-            .application_version(vk::make_api_version(0, app_major, app_minor, app_patch))
+            .application_name(game_info.app_name)
+            .application_version(vk::make_api_version(
+                0,
+                game_info.major,
+                game_info.minor,
+                game_info.patch,
+            ))
             .engine_name(c"Alcor")
             .engine_version(engine_version);
 
@@ -78,62 +83,28 @@ impl Drop for VulkanInstance {
 }
 
 #[allow(dead_code)]
-pub struct GameInfo<'a> {
-    pub app_name: &'a CStr,
-    pub major: u32,
-    pub minor: u32,
-    pub patch: u32,
-}
-
-#[allow(dead_code)]
-impl<'a> Default for GameInfo<'a> {
-    fn default() -> Self {
-        Self {
-            app_name: c"",
-            major: 0,
-            minor: 0,
-            patch: 0,
-        }
-    }
-}
-
-#[allow(dead_code)]
 pub struct VulkanContext {
     pub vulkan_instance: VulkanInstance,
+    pub vulkan_device: VulkanDevice,
 }
 
 #[allow(dead_code)]
 impl VulkanContext {
-    pub fn new(game_info: GameInfo) -> Result<Self, Box<dyn error::Error>> {
+    pub fn new(game_info: &GameInfo, window: &Window) -> Result<Self, Box<dyn error::Error>> {
+        let vk_instance_ext = display_vk_ext(window)?;
+        let vulkan_instance = VulkanInstance::new(game_info, Some(vk_instance_ext))?;
+        let vulkan_device = VulkanDevice::new(&vulkan_instance.instance)?;
         Ok(Self {
-            vulkan_instance: VulkanInstance::new(
-                game_info.app_name,
-                game_info.major,
-                game_info.minor,
-                game_info.patch,
-                None,
-            )?,
+            vulkan_instance,
+            vulkan_device,
         })
     }
 }
 
-#[allow(dead_code)]
-pub struct RenderingCollection<'a> {
-    pub vulkan_context: VulkanContext,
-    pub window: window::WindowLoop<'a>,
+pub fn display_vk_ext(window: &Window) -> Result<&'static [*const c_char], Box<dyn error::Error>> {
+    let display_handle = window.display_handle()?.clone();
+
+    Ok(ash_window::enumerate_required_extensions(
+        display_handle.as_raw(),
+    )?)
 }
-
-#[allow(dead_code)]
-impl<'a> RenderingCollection<'a> {
-    pub fn new(game_info: GameInfo) -> Result<Self, Box<dyn error::Error>> {
-        let mut rendering_collection = Self {
-            window: window::WindowLoop::default(),
-            vulkan_context: VulkanContext::new(game_info)?,
-        };
-
-        rendering_collection.window.set_renderer(render);
-        Ok(rendering_collection)
-    }
-}
-
-pub fn render(vulkan_context: &VulkanContext) {}

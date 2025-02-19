@@ -4,19 +4,47 @@ use ash::{
 };
 use std::error;
 
+pub struct VulkanDevice {
+    pub device: vk::PhysicalDevice,
+}
+
+impl VulkanDevice {
+    pub fn new(instance: &Instance) -> Result<Self, Box<dyn error::Error>> {
+        let device = select_vk_physical_device(instance)?;
+        Ok(Self { device })
+    }
+}
+
 // we dyn box the error in result to make error inference runtime,
 // this is so that the function can support multiple error types.
 // these errors are passed on by different functions using ?
-pub fn select_vk_physical_device(
+fn select_vk_physical_device(
     instance: &Instance,
 ) -> Result<vk::PhysicalDevice, Box<dyn error::Error>> {
     let physical_devices = unsafe { instance.enumerate_physical_devices()? };
 
-    let physical_device = *physical_devices
+    // turn each physical device into tupil containing our score and device
+    let mut physical_devices: Vec<(u64, &vk::PhysicalDevice)> = physical_devices
         .iter()
-        .max_by_key(|physical_device| score_physical_device(physical_device, instance))
-        .ok_or("Devices Vector Empty")?;
-    Ok(physical_device)
+        .map(|physical_device| {
+            (
+                score_physical_device(physical_device, instance),
+                physical_device,
+            )
+        })
+        .collect();
+
+    // sort by the score
+    physical_devices.sort_by_key(|device_score| device_score.0);
+
+    // Highest scoring element last in vec
+    let physical_device = physical_devices.last().ok_or("No Devices Found")?;
+    // return device if score was greater than 0
+    if physical_device.0 > 0 {
+        Ok(*physical_devices[0].1)
+    } else {
+        Err("No Suitable Device Found".into())
+    }
 }
 
 // calculate a capability score for a physical device
@@ -62,8 +90,8 @@ fn score_physical_device(physical_device: &vk::PhysicalDevice, instance: &Instan
         .iter()
         .any(|queue_prop| queue_prop.queue_flags.contains(vk::QueueFlags::COMPUTE));
 
-    if graphics_queue {
-        score += 30
+    if !graphics_queue {
+        return 0;
     }
 
     if compute_queue {
