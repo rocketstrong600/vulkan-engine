@@ -4,9 +4,19 @@ mod utils;
 
 use crate::utils::GameInfo;
 
+use simple_logger::SimpleLogger;
 use winit::event_loop::EventLoop;
 
 fn main() {
+    let logger = SimpleLogger::new().with_level(log::LevelFilter::Debug);
+
+    match logger.init() {
+        Ok(l) => l,
+        Err(e) => {
+            println!("Logger Init Error: {}", e);
+        }
+    }
+
     let game_info = GameInfo {
         app_name: c"Test",
         major: 0,
@@ -14,38 +24,6 @@ fn main() {
         patch: 1,
     };
 
-    /*
-        let instance_version = unsafe {
-            eng_instance
-                .instance
-                .get_physical_device_properties(physical_device)
-                .api_version
-        };
-
-        let device_name = unsafe {
-            CStr::from_ptr(
-                eng_instance
-                    .instance
-                    .get_physical_device_properties(physical_device)
-                    .device_name
-                    .as_ptr(),
-            )
-            .to_string_lossy()
-        };
-
-        let major = vk::api_version_major(instance_version);
-        let minor = vk::api_version_minor(instance_version);
-        let patch = vk::api_version_patch(instance_version);
-
-        println!(
-            "Device Name: {}\nVulkan Instance Version: {}.{}.{}",
-            device_name, major, minor, patch
-        );
-        println!(
-            "Device Memory: {}MiB",
-            physical_device_memory_size(&physical_device, &eng_instance.instance)
-        );
-    */
     let event_loop_result = EventLoop::new();
 
     let mut event_loop = match event_loop_result {

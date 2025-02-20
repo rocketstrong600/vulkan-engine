@@ -1,6 +1,7 @@
 use crate::renderer::VulkanContext;
 use crate::utils::GameInfo;
 use crate::utils::ReplaceWith;
+use log::info;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
@@ -20,7 +21,9 @@ pub struct AppCTX {
 impl AppCTX {
     fn new(game_info: GameInfo, event_loop: &ActiveEventLoop) -> Self {
         let window = event_loop
-            .create_window(Window::default_attributes())
+            .create_window(
+                Window::default_attributes().with_title(game_info.app_name.to_string_lossy()),
+            )
             .unwrap();
         let vulkan_ctx = VulkanContext::new(&game_info, &window).unwrap();
         Self {
@@ -74,6 +77,10 @@ impl App {
         self.replace_with(|state| match state {
             Self::Initialised(_) => panic!(),
             Self::Uninitialised { game_info } => {
+                info!(
+                    "Initialising Game: {}",
+                    game_info.app_name.to_string_lossy()
+                );
                 Self::Initialised(AppCTX::new(game_info, event_loop))
             }
         });

@@ -6,4 +6,6 @@ edition = "2021"
 [dependencies]
 ash = "0.38.0"
 ash-window = "0.13.0"
+log = "0.4.25"
+simple_logger = "5.0.0"
 winit = "0.30.8"

@@ -1,7 +1,5 @@
-use ash::{
-    vk::{self, MemoryHeapFlags},
-    Instance,
-};
+use ash::{vk, Instance};
+use log::{debug, info};
 use std::error;
 
 pub struct VulkanDevice {
@@ -11,6 +9,30 @@ pub struct VulkanDevice {
 impl VulkanDevice {
     pub fn new(instance: &Instance) -> Result<Self, Box<dyn error::Error>> {
         let device = select_vk_physical_device(instance)?;
+
+        let mut device_properties_two = vk::PhysicalDeviceProperties2::default();
+
+        unsafe { instance.get_physical_device_properties2(device, &mut device_properties_two) };
+
+        let instance_version = device_properties_two.properties.api_version;
+        info!(
+            "VK Instance Version: {}.{}.{}",
+            vk::api_version_major(instance_version),
+            vk::api_version_minor(instance_version),
+            vk::api_version_patch(instance_version)
+        );
+
+        let device_name = device_properties_two.properties.device_name_as_c_str();
+
+        if let Ok(device_name) = device_name {
+            info!("VK Device Name: {}", device_name.to_string_lossy());
+        }
+
+        info!(
+            "VK Device Memory: {}",
+            physical_device_memory_size(&device, &instance)
+        );
+
         Ok(Self { device })
     }
 }
@@ -41,7 +63,7 @@ fn select_vk_physical_device(
     let physical_device = physical_devices.last().ok_or("No Devices Found")?;
     // return device if score was greater than 0
     if physical_device.0 > 0 {
-        Ok(*physical_devices[0].1)
+        Ok(*physical_device.1)
     } else {
         Err("No Suitable Device Found".into())
     }
