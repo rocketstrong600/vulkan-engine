@@ -1,6 +1,7 @@
 use crate::renderer::VulkanContext;
 use crate::utils::GameInfo;
 use crate::utils::ReplaceWith;
+use ash::khr::surface;
 use log::info;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -9,6 +10,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
+use winit::raw_window_handle::HasDisplayHandle;
+use winit::raw_window_handle::HasWindowHandle;
 use winit::window::Window;
 use winit::window::WindowId;
 
@@ -25,7 +28,26 @@ impl AppCTX {
                 Window::default_attributes().with_title(game_info.app_name.to_string_lossy()),
             )
             .unwrap();
+
         let vulkan_ctx = VulkanContext::new(&game_info, &window).unwrap();
+
+        // create surface for binding vulkan to window surface. TODO move out of appCTX into vulkan stuff REQ figure out structure
+        let surface = unsafe {
+            ash_window::create_surface(
+                &vulkan_ctx.vulkan_instance.entry,
+                &vulkan_ctx.vulkan_instance.instance,
+                window.display_handle().unwrap().as_raw(),
+                window.window_handle().unwrap().as_raw(),
+                None,
+            )
+        }
+        .unwrap();
+
+        let surface_loader = surface::Instance::new(
+            &vulkan_ctx.vulkan_instance.entry,
+            &vulkan_ctx.vulkan_instance.instance,
+        );
+
         Self {
             game_info,
             window,

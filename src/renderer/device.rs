@@ -1,18 +1,20 @@
-use ash::{vk, Instance};
-use log::{debug, info};
+use ash::{khr, vk, Device, Instance};
+use log::info;
 use std::error;
 
 pub struct VulkanDevice {
-    pub device: vk::PhysicalDevice,
+    pub p_device: vk::PhysicalDevice,
+    pub device: Device,
+    pub graphics_queue: vk::Queue,
 }
 
 impl VulkanDevice {
     pub fn new(instance: &Instance) -> Result<Self, Box<dyn error::Error>> {
-        let device = select_vk_physical_device(instance)?;
+        let p_device = select_vk_physical_device(instance)?;
 
         let mut device_properties_two = vk::PhysicalDeviceProperties2::default();
 
-        unsafe { instance.get_physical_device_properties2(device, &mut device_properties_two) };
+        unsafe { instance.get_physical_device_properties2(p_device, &mut device_properties_two) };
 
         let instance_version = device_properties_two.properties.api_version;
         info!(
@@ -30,13 +32,70 @@ impl VulkanDevice {
 
         info!(
             "VK Device Memory: {}",
-            physical_device_memory_size(&device, &instance)
+            physical_device_memory_size(&p_device, &instance)
         );
 
-        Ok(Self { device })
+        let queue_family_properties =
+            unsafe { instance.get_physical_device_queue_family_properties(p_device) };
+
+        let graphics_queue_index = queue_family_properties
+            .iter()
+            .enumerate()
+            .find_map(|queue_prop| {
+                if queue_prop.1.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                    Some(queue_prop)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+            .0;
+
+        let priorities = [1.0f32];
+
+        let queue_create_infos = vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(graphics_queue_index as u32)
+            .queue_priorities(&priorities);
+
+        let features = vk::PhysicalDeviceFeatures::default();
+
+        // array of device enable extension_names c string ptr
+        let device_extension_names = [
+            khr::swapchain::NAME.as_ptr(),
+            khr::dynamic_rendering::NAME.as_ptr(),
+        ];
+
+        //Dynamic Rendering Device Featuers
+        let mut dynamic_rendering_feature =
+            vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
+
+        let device_create_info = vk::DeviceCreateInfo::default()
+            .enabled_extension_names(&device_extension_names)
+            .enabled_features(&features)
+            .queue_create_infos(std::slice::from_ref(&queue_create_infos))
+            .push_next(&mut dynamic_rendering_feature);
+
+        let device = unsafe { instance.create_device(p_device, &device_create_info, None)? };
+
+        let graphics_queue = unsafe { device.get_device_queue(graphics_queue_index as u32, 0u32) };
+
+        Ok(Self {
+            p_device,
+            device,
+            graphics_queue,
+        })
     }
 }
 
+impl Drop for VulkanDevice {
+    fn drop(&mut self) {
+        unsafe {
+            //must be dropped before instance
+            self.device.device_wait_idle().unwrap();
+            self.device.destroy_device(None);
+        };
+    }
+}
 // we dyn box the error in result to make error inference runtime,
 // this is so that the function can support multiple error types.
 // these errors are passed on by different functions using ?
@@ -79,8 +138,7 @@ fn score_physical_device(physical_device: &vk::PhysicalDevice, instance: &Instan
     if device_properties
         .device_name_as_c_str()
         .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
+        .to_string_lossy()
         .starts_with("llvmpipe")
     {
         return 0;
@@ -98,6 +156,31 @@ fn score_physical_device(physical_device: &vk::PhysicalDevice, instance: &Instan
     }
 
     let device_features = unsafe { instance.get_physical_device_features(*physical_device) };
+
+    let device_extensions = unsafe {
+        instance
+            .enumerate_device_extension_properties(*physical_device)
+            .unwrap_or_default()
+    };
+
+    let dynamic_rendering = device_extensions.iter().any(|extension_prop| {
+        extension_prop.extension_name_as_c_str().unwrap_or_default()
+            == ash::khr::dynamic_rendering::NAME
+    });
+
+    let mesh_shading = device_extensions.iter().any(|extension_prop| {
+        extension_prop.extension_name_as_c_str().unwrap_or_default() == ash::ext::mesh_shader::NAME
+    });
+
+    // Require Dynamic Rendering
+    if !dynamic_rendering {
+        return 0;
+    }
+
+    // Mesh Shading Modern
+    if mesh_shading {
+        score += 10;
+    }
 
     let queue_family_properties =
         unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };

@@ -8,7 +8,7 @@ use simple_logger::SimpleLogger;
 use winit::event_loop::EventLoop;
 
 fn main() {
-    let logger = SimpleLogger::new().with_level(log::LevelFilter::Debug);
+    let logger = SimpleLogger::new().with_level(log::LevelFilter::Info);
 
     match logger.init() {
         Ok(l) => l,

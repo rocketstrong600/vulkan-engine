@@ -14,7 +14,7 @@ pub const ENGINE_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
 #[allow(dead_code)]
 pub struct VulkanInstance {
-    _entry: Entry,
+    pub entry: Entry,
     pub instance: Instance,
 }
 
@@ -54,10 +54,7 @@ impl VulkanInstance {
 
         let instance = Self::create_instance(&entry, &app_info, extension_names)?;
 
-        Ok(Self {
-            _entry: entry,
-            instance,
-        })
+        Ok(Self { entry, instance })
     }
 
     fn create_instance(
