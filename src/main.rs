@@ -33,7 +33,7 @@ fn main() {
 
     let mut app = crate::app::App::new(game_info);
 
-    /*
+    /* // old code to list required extensions for window manager surface
     println!(
         "{:?}",
         renderer::get_winit_vk_ext(&event_loop)

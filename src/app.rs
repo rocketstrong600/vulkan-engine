@@ -31,23 +31,6 @@ impl AppCTX {
 
         let vulkan_ctx = VulkanContext::new(&game_info, &window).unwrap();
 
-        // create surface for binding vulkan to window surface. TODO move out of appCTX into vulkan stuff REQ figure out structure
-        let surface = unsafe {
-            ash_window::create_surface(
-                &vulkan_ctx.vulkan_instance.entry,
-                &vulkan_ctx.vulkan_instance.instance,
-                window.display_handle().unwrap().as_raw(),
-                window.window_handle().unwrap().as_raw(),
-                None,
-            )
-        }
-        .unwrap();
-
-        let surface_loader = surface::Instance::new(
-            &vulkan_ctx.vulkan_instance.entry,
-            &vulkan_ctx.vulkan_instance.instance,
-        );
-
         Self {
             game_info,
             window,

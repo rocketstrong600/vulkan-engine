@@ -1,10 +1,12 @@
 pub mod device;
+pub mod surface;
 
 use crate::renderer::device::VulkanDevice;
 use crate::utils::GameInfo;
 use ash::{vk, Entry, Instance};
 use std::error;
 use std::ffi::c_char;
+use surface::VulkanSurface;
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 
@@ -81,8 +83,9 @@ impl Drop for VulkanInstance {
 
 #[allow(dead_code)]
 pub struct VulkanContext {
-    pub vulkan_instance: VulkanInstance,
+    pub vulkan_surface: VulkanSurface,
     pub vulkan_device: VulkanDevice,
+    pub vulkan_instance: VulkanInstance,
 }
 
 #[allow(dead_code)]
@@ -90,10 +93,12 @@ impl VulkanContext {
     pub fn new(game_info: &GameInfo, window: &Window) -> Result<Self, Box<dyn error::Error>> {
         let vk_instance_ext = display_vk_ext(window)?;
         let vulkan_instance = VulkanInstance::new(game_info, Some(vk_instance_ext))?;
-        let vulkan_device = VulkanDevice::new(&vulkan_instance.instance)?;
+        let vulkan_surface = VulkanSurface::new(&vulkan_instance, window)?;
+        let vulkan_device = VulkanDevice::new(&vulkan_instance, &vulkan_surface)?;
         Ok(Self {
             vulkan_instance,
             vulkan_device,
+            vulkan_surface,
         })
     }
 }
