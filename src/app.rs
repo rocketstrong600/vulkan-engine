@@ -1,7 +1,6 @@
 use crate::renderer::VulkanContext;
 use crate::utils::GameInfo;
 use crate::utils::ReplaceWith;
-use ash::khr::surface;
 use log::info;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -10,15 +9,13 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
-use winit::raw_window_handle::HasDisplayHandle;
-use winit::raw_window_handle::HasWindowHandle;
 use winit::window::Window;
 use winit::window::WindowId;
 
 pub struct AppCTX {
-    game_info: GameInfo,
-    window: Window,
-    vulkan_ctx: VulkanContext,
+    pub game_info: GameInfo,
+    pub window: Window,
+    pub vulkan_ctx: VulkanContext,
 }
 
 impl AppCTX {
@@ -54,7 +51,7 @@ impl ApplicationHandler for App {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        window_id: WindowId,
+        _window_id: WindowId,
         event: WindowEvent,
     ) {
         match event {

@@ -1,9 +1,8 @@
-use ash::vk::{IDirectFB, QueueFlags};
+use ash::vk::QueueFlags;
 use ash::{khr, vk, Device, Instance};
 use log::info;
 use std::error;
 use std::ffi::CStr;
-use std::rc::Rc;
 
 use crate::renderer::surface::VulkanSurface;
 use crate::renderer::VulkanInstance;
@@ -195,7 +194,7 @@ where
 
     // add queue flag requirments
     pub fn push_queue_flag(mut self, queue_flag: vk::QueueFlags) -> Self {
-        self.required_queue_flags = self.required_queue_flags | queue_flag;
+        self.required_queue_flags |= queue_flag;
         self
     }
 

@@ -1,9 +1,6 @@
-mod app;
-mod renderer;
-mod utils;
 
-use crate::utils::GameInfo;
-
+use vulkan_engine::utils::GameInfo;
+use vulkan_engine::app::App;
 use simple_logger::SimpleLogger;
 use winit::event_loop::EventLoop;
 
@@ -31,7 +28,7 @@ fn main() {
         Err(error) => panic!("Failed to Create Event Loop: {error:?}"),
     };
 
-    let mut app = crate::app::App::new(game_info);
+    let mut app = App::new(game_info);
 
     /* // old code to list required extensions for window manager surface
     println!(

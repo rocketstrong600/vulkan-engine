@@ -14,13 +14,11 @@ pub const ENGINE_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 pub const ENGINE_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
-#[allow(dead_code)]
 pub struct VulkanInstance {
     pub entry: Entry,
     pub instance: Instance,
 }
 
-#[allow(dead_code)]
 impl VulkanInstance {
     pub fn new(
         game_info: &GameInfo,
@@ -81,14 +79,12 @@ impl Drop for VulkanInstance {
     }
 }
 
-#[allow(dead_code)]
 pub struct VulkanContext {
     pub vulkan_surface: VulkanSurface,
     pub vulkan_device: VulkanDevice,
     pub vulkan_instance: VulkanInstance,
 }
 
-#[allow(dead_code)]
 impl VulkanContext {
     pub fn new(game_info: &GameInfo, window: &Window) -> Result<Self, Box<dyn error::Error>> {
         let vk_instance_ext = display_vk_ext(window)?;
@@ -104,7 +100,7 @@ impl VulkanContext {
 }
 
 pub fn display_vk_ext(window: &Window) -> Result<&'static [*const c_char], Box<dyn error::Error>> {
-    let display_handle = window.display_handle()?.clone();
+    let display_handle = window.display_handle()?;
 
     Ok(ash_window::enumerate_required_extensions(
         display_handle.as_raw(),
