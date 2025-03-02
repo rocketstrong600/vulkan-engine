@@ -10,11 +10,13 @@
       let
         pkgs = import nixpkgs { inherit system; };
         naersk-lib = pkgs.callPackage naersk { };
+        shader-slang = pkgs.callPackage ./NixDep/shader-slang.nix { };
       in
       {
+
         defaultPackage = naersk-lib.buildPackage ./.;
         devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer vulkan-loader vulkan-validation-layers vulkan-tools-lunarg libxkbcommon wayland];
+          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer vulkan-loader vulkan-validation-layers vulkan-tools-lunarg libxkbcommon wayland spirv-tools spirv-cross spirv-headers glslang shader-slang];
           packages = [ vulkan-tools ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
           shellHook = ''
