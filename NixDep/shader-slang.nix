@@ -26,13 +26,13 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "shader-slang";
     repo = "slang";
     tag = "v${finalAttrs.version}";
-    hash = "";
+    hash = "sha256-yNPAJX7OxxQLXDm3s7Hx5QA9fxy1qbAMp4LKYVqxMVM=";
     fetchSubmodules = true;
   };
 
-  patches =
-    [
-    ];
+  patches = [
+    ./1-find-packages.patch
+  ];
 
   outputs = [
     "out"
