@@ -32,6 +32,11 @@ stdenv.mkDerivation (finalAttrs: {
 
   patches = [
     ./1-find-packages.patch
+  ]
+  ++ lib.optionals withGlslang [
+    # Upstream depends on glslang 13 and there are minor breaking changes in glslang 15, the version
+    # we ship in nixpkgs.
+    ./3-glslang-15.patch
   ];
 
   outputs = [
