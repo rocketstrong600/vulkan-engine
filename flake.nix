@@ -16,7 +16,7 @@
 
         defaultPackage = naersk-lib.buildPackage ./.;
         devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer vulkan-loader vulkan-validation-layers vulkan-tools-lunarg libxkbcommon wayland spirv-tools spirv-cross spirv-headers glslang shader-slang];
+          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer vulkan-loader vulkan-validation-layers vulkan-tools-lunarg libxkbcommon wayland shader-slang];
           packages = [ vulkan-tools ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
           shellHook = ''

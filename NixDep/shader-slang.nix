@@ -6,11 +6,10 @@
   ninja,
   python3,
   miniz,
-  lz4,
   libxml2,
   libX11,
-  spirv-headers,
-  glslang,
+  # spirv-headers,
+  # glslang,
   versionCheckHook,
   gitUpdater,
 
@@ -31,12 +30,7 @@ stdenv.mkDerivation (finalAttrs: {
   };
 
   patches = [
-    ./1-find-packages.patch
-  ]
-  ++ lib.optionals withGlslang [
-    # Upstream depends on glslang 13 and there are minor breaking changes in glslang 15, the version
-    # we ship in nixpkgs.
-    ./3-glslang-15.patch
+    #./1-find-packages.patch
   ];
 
   outputs = [
@@ -56,16 +50,14 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs =
     [
       miniz
-      lz4
       libxml2
-      spirv-headers
     ]
     ++ (lib.optionals stdenv.hostPlatform.isLinux [
       libX11
     ])
     ++ (lib.optionals withGlslang [
       # SPIRV-tools is included in glslang.
-      glslang
+      # glslang
     ]);
 
   separateDebugInfo = true;
@@ -99,19 +91,8 @@ stdenv.mkDerivation (finalAttrs: {
       # https://github.com/shader-slang/slang-rhi is "under active refactoring
       # and development, and is not yet ready for general use."
       "-DSLANG_ENABLE_SLANG_RHI=OFF"
-      "-DSLANG_USE_SYSTEM_MINIZ=ON"
-      "-DSLANG_USE_SYSTEM_LZ4=ON"
-      "-DSLANG_SPIRV_HEADERS_INCLUDE_DIR=${spirv-headers}/include"
       "-DSLANG_SLANG_LLVM_FLAVOR=DISABLE"
-    ]
-    # Currently depends on unreleased op type `SpvOpTypeNodePayloadArrayAMDX`,
-    # which will be included in next release >1.3.296
-    ++ lib.optional (lib.versionAtLeast spirv-headers.version "1.3.297.0") "-DSLANG_USE_SYSTEM_SPIRV_HEADERS=ON"
-    ++ (lib.optionals withGlslang [
-      "-DSLANG_USE_SYSTEM_SPIRV_TOOLS=ON"
-      "-DSLANG_USE_SYSTEM_GLSLANG=ON"
-    ])
-    ++ lib.optional (!withGlslang) "-DSLANG_ENABLE_SLANG_GLSLANG=OFF";
+    ];
 
   nativeInstallCheckInputs = [ versionCheckHook ];
   versionCheckProgram = "${placeholder "out"}/bin/slangc";

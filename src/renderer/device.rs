@@ -8,8 +8,8 @@ use crate::renderer::surface::VulkanSurface;
 use crate::renderer::VulkanInstance;
 pub struct VulkanDevice {
     pub p_device: vk::PhysicalDevice,
-    pub device: Device,
     pub graphics_queue: vk::Queue,
+    pub device: Device,
 }
 
 impl VulkanDevice {

@@ -15,8 +15,8 @@ pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 pub const ENGINE_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
 pub struct VulkanInstance {
-    pub entry: Entry,
     pub instance: Instance,
+    pub entry: Entry,
 }
 
 impl VulkanInstance {
@@ -79,6 +79,7 @@ impl Drop for VulkanInstance {
     }
 }
 
+//Safe Destruction Order structs drop from top to bottom.
 pub struct VulkanContext {
     pub vulkan_surface: VulkanSurface,
     pub vulkan_device: VulkanDevice,

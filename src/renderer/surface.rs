@@ -7,8 +7,8 @@ use winit::{
 };
 
 pub struct VulkanSurface {
-    pub surface_loader: surface::Instance,
     pub surface: vk::SurfaceKHR,
+    pub surface_loader: surface::Instance,
 }
 
 impl VulkanSurface {
