@@ -17,6 +17,10 @@ impl VulkanDevice {
         instance: &VulkanInstance,
         vulkan_surface: &VulkanSurface,
     ) -> Result<Self, Box<dyn error::Error>> {
+        // Device Requirments should probably be initialised in the Vulkan CTX.
+        // With the possibility for the Engine user to append their own-
+        // requirments, Possibly by requesting a mutable reference to-
+        // base extentions before device setup.
         let dev_requirments = DeviceRequirments::default()
             .push_queue_flag(vk::QueueFlags::GRAPHICS)
             .push_ext(khr::dynamic_rendering::NAME)
@@ -24,7 +28,7 @@ impl VulkanDevice {
             .push_fn(|physical_device, instance| {
                 let device_properties =
                     unsafe { instance.get_physical_device_properties(*physical_device) };
-                // llvmpipe virtual gpu can go die in a hole
+                // Declare llvmpipe virtual gpu as incompatible
                 !device_properties
                     .device_name_as_c_str()
                     .unwrap_or_default()
@@ -32,6 +36,8 @@ impl VulkanDevice {
                     .starts_with("llvmpipe")
             });
 
+        // there is no way for the scoring function to be changed by the user then why have it passed as an argument.
+        // possibly make device picking a struct with changable defaults.
         let (p_device, ideal_graphics_queue) = Self::pick_device(
             &instance.instance,
             score_physical_device,
@@ -66,6 +72,8 @@ impl VulkanDevice {
             physical_device_memory_size(&p_device, &instance.instance)
         );
 
+        // Setup Logical Device (Set Features, Enable Extentions, Configure Extentions)
+
         let priorities = [1.0f32];
 
         let queue_create_infos = vk::DeviceQueueCreateInfo::default()
@@ -74,10 +82,11 @@ impl VulkanDevice {
 
         let features = vk::PhysicalDeviceFeatures::default();
 
-        // array of device enable extension_names c string ptr
+        // array of Requested Device extension_names as c string ptr
         let device_extension_names = dev_requirments.get_requirments_raw();
 
-        //Dynamic Rendering Device Featuers
+        // Dynamic Rendering Ext configuration
+        // Feature Configuration Should probably be settable Outside of here maybe in Device Requirments Struct
         let mut dynamic_rendering_feature =
             vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
 
@@ -87,12 +96,14 @@ impl VulkanDevice {
             .queue_create_infos(std::slice::from_ref(&queue_create_infos))
             .push_next(&mut dynamic_rendering_feature);
 
+        //Create Logical Device
         let device = unsafe {
             instance
                 .instance
                 .create_device(p_device, &device_create_info, None)?
         };
 
+        // Get Graphics queue for logical devices
         let graphics_queue = unsafe { device.get_device_queue(ideal_graphics_queue, 0u32) };
 
         Ok(Self {
@@ -199,6 +210,10 @@ where
     }
 
     /// Checks if Physical Device is Compatible
+    /// surface_requirment is an optional type for checking if the queue Supports the surface we wan't to display to
+    /// checked_queue is an Optional Arguments for Obtaining the Queue Index that was
+    // Maybe upgrade to Result Type as we currently treat less related errors as an incompatible device
+    // Most of the errors are VKResult errors Retainging to memory issues.
     pub fn device_compat(
         &self,
         physical_device: &vk::PhysicalDevice,
@@ -233,14 +248,16 @@ where
         // first suported queu_prop
         let queue_passes = queue_family_prop.iter().enumerate().any(|queue_prop| {
             let mut suported = queue_prop.1.queue_flags.contains(self.required_queue_flags);
+            // if we got passed a surface Requirment Check it is Supported
             if let Some(surface_req) = surface_requirment {
                 suported |= surface_req
                     .queue_supports_surface(*physical_device, queue_prop.0 as u32)
                     .unwrap_or(false);
+            }
+            if let Some(queue_index) = checked_queue.as_mut() {
                 if suported {
-                    if let Some(queue_index) = checked_queue.as_mut() {
-                        **queue_index = queue_prop.0 as u32;
-                    }
+                    // set supported queue_index to be passed back
+                    **queue_index = queue_prop.0 as u32;
                 }
             }
             suported
@@ -280,16 +297,6 @@ fn score_physical_device(physical_device: &vk::PhysicalDevice, instance: &Instan
     let mut score: u64 = 0;
     let device_properties = unsafe { instance.get_physical_device_properties(*physical_device) };
 
-    // llvmpipe virtual gpu can go die in a hole
-    // if device_properties
-    //     .device_name_as_c_str()
-    //     .unwrap_or_default()
-    //     .to_string_lossy()
-    //     .starts_with("llvmpipe")
-    // {
-    //     return None;
-    // }
-    // discrete gpu adds more score than integrated everything else does not improve score
     let device_type = device_properties.device_type;
     match device_type {
         vk::PhysicalDeviceType::DISCRETE_GPU => {
@@ -309,19 +316,9 @@ fn score_physical_device(physical_device: &vk::PhysicalDevice, instance: &Instan
             .unwrap_or_default()
     };
 
-    // let dynamic_rendering = device_extensions.iter().any(|extension_prop| {
-    //     extension_prop.extension_name_as_c_str().unwrap_or_default()
-    //         == ash::khr::dynamic_rendering::NAME
-    // });
-
     let mesh_shading = device_extensions.iter().any(|extension_prop| {
         extension_prop.extension_name_as_c_str().unwrap_or_default() == ash::ext::mesh_shader::NAME
     });
-
-    // Require Dynamic Rendering
-    // if !dynamic_rendering {
-    //     return None;
-    // }
 
     // Mesh Shading Modern
     if mesh_shading {
@@ -331,12 +328,6 @@ fn score_physical_device(physical_device: &vk::PhysicalDevice, instance: &Instan
     let queue_family_properties =
         unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
 
-    // you can't even make a game without a graphics queue
-    // let suitable_queue = IdealGraphicsQueue::find_queue(
-    //     *physical_device,
-    //     queue_family_properties.clone(),
-    //     vulkan_surface,
-    // );
     // good cards should be capable of compute
     let compute_queue = queue_family_properties
         .iter()
