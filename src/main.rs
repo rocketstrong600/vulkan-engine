@@ -30,16 +30,6 @@ fn main() {
 
     let mut app = App::new(game_info);
 
-    /* // old code to list required extensions for window manager surface
-    println!(
-        "{:?}",
-        renderer::get_winit_vk_ext(&event_loop)
-            .unwrap()
-            .iter()
-            .map(|c_name| { unsafe { CStr::from_ptr(*c_name).to_str().unwrap() } })
-            .collect::<Vec<&str>>()
-    );
-    */
 
     if let Err(error) = app.start(&mut event_loop) {
         panic!("Failed on EventLoop: {error:?}");

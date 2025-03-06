@@ -1,4 +1,4 @@
-use crate::renderer::VulkanContext;
+use crate::renderer::VKContext;
 use crate::utils::GameInfo;
 use crate::utils::ReplaceWith;
 use log::info;
@@ -15,7 +15,7 @@ use winit::window::WindowId;
 pub struct AppCTX {
     pub game_info: GameInfo,
     pub window: Window,
-    pub vulkan_ctx: VulkanContext,
+    pub vulkan_ctx: VKContext,
 }
 
 impl AppCTX {
@@ -26,7 +26,7 @@ impl AppCTX {
             )
             .unwrap();
 
-        let vulkan_ctx = VulkanContext::new(&game_info, &window).unwrap();
+        let vulkan_ctx = VKContext::new(&game_info, &window).unwrap();
 
         Self {
             game_info,

@@ -4,28 +4,28 @@ use log::info;
 use std::error;
 use std::ffi::CStr;
 
-use crate::renderer::surface::VulkanSurface;
-use crate::renderer::VulkanInstance;
-pub struct VulkanDevice {
+use crate::renderer::surface::VKSurface;
+use crate::renderer::VKInstance;
+pub struct VKDevice {
     pub p_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
     pub device: Device,
 }
 
-impl VulkanDevice {
+impl VKDevice {
     pub fn new(
-        instance: &VulkanInstance,
-        vulkan_surface: &VulkanSurface,
+        instance: &VKInstance,
+        vulkan_surface: &VKSurface,
     ) -> Result<Self, Box<dyn error::Error>> {
         // Device Requirments should probably be initialised in the Vulkan CTX.
         // With the possibility for the Engine user to append their own-
         // requirments, Possibly by requesting a mutable reference to-
         // base extentions before device setup.
-        let dev_requirments = DeviceRequirments::default()
-            .push_queue_flag(vk::QueueFlags::GRAPHICS)
+        let dev_requirments = VKDeviceRequirments::default()
+            .add_queue_flag(vk::QueueFlags::GRAPHICS)
             .push_ext(khr::dynamic_rendering::NAME)
             .push_ext(khr::swapchain::NAME)
-            .push_fn(|physical_device, instance| {
+            .push_fn(|physical_device, instance, _| {
                 let device_properties =
                     unsafe { instance.get_physical_device_properties(*physical_device) };
                 // Declare llvmpipe virtual gpu as incompatible
@@ -34,8 +34,19 @@ impl VulkanDevice {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .starts_with("llvmpipe")
-            });
+            })
+            .push_fn(|physical_device, _, vk_surface: Option<&VKSurface>| {
+                if let Some(vk_surface) = vk_surface {
+                    let swap_capabilities = vk_surface
+                        .get_swapchain_capabilities(*physical_device)
+                        .unwrap();
 
+                    swap_capabilities.surface_capibilities.min_image_count > 0
+                        || !swap_capabilities.present_modes.is_empty()
+                } else {
+                    true
+                }
+            });
         // there is no way for the scoring function to be changed by the user then why have it passed as an argument.
         // possibly make device picking a struct with changable defaults.
         let (p_device, ideal_graphics_queue) = Self::pick_device(
@@ -113,15 +124,14 @@ impl VulkanDevice {
         })
     }
 
-    fn pick_device<F, B>(
+    fn pick_device<F>(
         instance: &Instance,
         score_function: F,
-        dev_requirments: &DeviceRequirments<B>,
-        vulkan_surface: &VulkanSurface,
+        dev_requirments: &VKDeviceRequirments,
+        vulkan_surface: &VKSurface,
     ) -> Result<(vk::PhysicalDevice, u32 /* queue_index */), Box<dyn error::Error>>
     where
         F: Fn(&vk::PhysicalDevice, &Instance) -> u64,
-        B: Fn(&vk::PhysicalDevice, &Instance) -> bool,
     {
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
 
@@ -160,7 +170,7 @@ impl VulkanDevice {
     }
 }
 
-impl Drop for VulkanDevice {
+impl Drop for VKDevice {
     fn drop(&mut self) {
         unsafe {
             //must be dropped before instance
@@ -177,19 +187,14 @@ impl Drop for VulkanDevice {
 /// let DeviceRequirments = DeviceRequirments::default().push_ext(ash::khr::dynamic_rendering::NAME);
 /// printf("Compatible {:?}", DeviceRequirments.check_device(physical_device));
 /// ```
-pub struct DeviceRequirments<F>
-where
-    F: Fn(&vk::PhysicalDevice, &Instance) -> bool,
-{
+pub struct VKDeviceRequirments<'a> {
     required_extentions: Vec<&'static CStr>,
-    requirement_functions: Vec<F>,
+    requirement_functions:
+        Vec<Box<dyn Fn(&vk::PhysicalDevice, &Instance, Option<&VKSurface>) -> bool + 'a>>,
     required_queue_flags: vk::QueueFlags,
 }
 
-impl<F> DeviceRequirments<F>
-where
-    F: Fn(&vk::PhysicalDevice, &Instance) -> bool,
-{
+impl<'a> VKDeviceRequirments<'a> {
     /// Adds a vulkan extention name to the requirments
     pub fn push_ext(mut self, ext_name: &'static CStr) -> Self {
         self.required_extentions.push(ext_name);
@@ -198,13 +203,16 @@ where
 
     /// Adds a 'fn(vk::PhysicalDevice, &Instance) -> bool' to the device compatability check process
     /// fn must return whether device meats functions requirments.
-    pub fn push_fn(mut self, fn_test: F) -> Self {
-        self.requirement_functions.push(fn_test);
+    pub fn push_fn<F>(mut self, fn_test: F) -> Self
+    where
+        F: Fn(&vk::PhysicalDevice, &Instance, Option<&VKSurface>) -> bool + 'a,
+    {
+        self.requirement_functions.push(Box::new(fn_test));
         self
     }
 
     // add queue flag requirments
-    pub fn push_queue_flag(mut self, queue_flag: vk::QueueFlags) -> Self {
+    pub fn add_queue_flag(mut self, queue_flag: vk::QueueFlags) -> Self {
         self.required_queue_flags |= queue_flag;
         self
     }
@@ -212,13 +220,14 @@ where
     /// Checks if Physical Device is Compatible
     /// surface_requirment is an optional type for checking if the queue Supports the surface we wan't to display to
     /// checked_queue is an Optional Arguments for Obtaining the Queue Index that was
-    // Maybe upgrade to Result Type as we currently treat less related errors as an incompatible device
-    // Most of the errors are VKResult errors Retainging to memory issues.
+    // Maybe upgrade to -> Result Type as we currently treat less related errors as an incompatible device
+    // Most of the errors are VKResult errors Retainging to memory issues unlikely at early initialisation.
+    // TODO: Return Reason for Compatibiliy issue in Result With Custom Error Type
     pub fn device_compat(
         &self,
         physical_device: &vk::PhysicalDevice,
         instance: &Instance,
-        surface_requirment: Option<&VulkanSurface>,
+        surface_requirment: Option<&VKSurface>,
         mut checked_queue: Option<&mut u32>,
     ) -> bool {
         let device_extentions = unsafe {
@@ -240,7 +249,7 @@ where
         let funcs_passes = self
             .requirement_functions
             .iter()
-            .any(|func| func(physical_device, instance));
+            .any(|func| func(physical_device, instance, surface_requirment));
 
         let queue_family_prop =
             unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
@@ -278,10 +287,7 @@ where
     }
 }
 
-impl<F> Default for DeviceRequirments<F>
-where
-    F: Fn(&vk::PhysicalDevice, &Instance) -> bool,
-{
+impl<'a> Default for VKDeviceRequirments<'a> {
     fn default() -> Self {
         Self {
             required_extentions: Vec::new(),

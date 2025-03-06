@@ -1,12 +1,12 @@
 pub mod device;
 pub mod surface;
 
-use crate::renderer::device::VulkanDevice;
+use crate::renderer::device::VKDevice;
 use crate::utils::GameInfo;
 use ash::{vk, Entry, Instance};
 use std::error;
 use std::ffi::c_char;
-use surface::VulkanSurface;
+use surface::VKSurface;
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 
@@ -14,12 +14,12 @@ pub const ENGINE_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 pub const ENGINE_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
-pub struct VulkanInstance {
+pub struct VKInstance {
     pub instance: Instance,
     pub entry: Entry,
 }
 
-impl VulkanInstance {
+impl VKInstance {
     pub fn new(
         game_info: &GameInfo,
         extension_names: Option<&[*const c_char]>,
@@ -71,7 +71,7 @@ impl VulkanInstance {
     }
 }
 
-impl Drop for VulkanInstance {
+impl Drop for VKInstance {
     fn drop(&mut self) {
         unsafe {
             self.instance.destroy_instance(None);
@@ -80,18 +80,18 @@ impl Drop for VulkanInstance {
 }
 
 //Safe Destruction Order structs drop from top to bottom.
-pub struct VulkanContext {
-    pub vulkan_surface: VulkanSurface,
-    pub vulkan_device: VulkanDevice,
-    pub vulkan_instance: VulkanInstance,
+pub struct VKContext {
+    pub vulkan_surface: VKSurface,
+    pub vulkan_device: VKDevice,
+    pub vulkan_instance: VKInstance,
 }
 
-impl VulkanContext {
+impl VKContext {
     pub fn new(game_info: &GameInfo, window: &Window) -> Result<Self, Box<dyn error::Error>> {
         let vk_instance_ext = display_vk_ext(window)?;
-        let vulkan_instance = VulkanInstance::new(game_info, Some(vk_instance_ext))?;
-        let vulkan_surface = VulkanSurface::new(&vulkan_instance, window)?;
-        let vulkan_device = VulkanDevice::new(&vulkan_instance, &vulkan_surface)?;
+        let vulkan_instance = VKInstance::new(game_info, Some(vk_instance_ext))?;
+        let vulkan_surface = VKSurface::new(&vulkan_instance, window)?;
+        let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
         Ok(Self {
             vulkan_instance,
             vulkan_device,
