@@ -4,7 +4,7 @@ use log::info;
 use std::error;
 use std::ffi::CStr;
 
-use crate::renderer::surface::VKSurface;
+use crate::renderer::surface::{VKSurface, VKSwapchainCapabilities};
 use crate::renderer::VKInstance;
 pub struct VKDevice {
     pub p_device: vk::PhysicalDevice,
@@ -37,9 +37,8 @@ impl VKDevice {
             })
             .push_fn(|physical_device, _, vk_surface: Option<&VKSurface>| {
                 if let Some(vk_surface) = vk_surface {
-                    let swap_capabilities = vk_surface
-                        .get_swapchain_capabilities(*physical_device)
-                        .unwrap();
+                    let swap_capabilities =
+                        VKSwapchainCapabilities::new(vk_surface, *physical_device).unwrap();
 
                     swap_capabilities.surface_capibilities.min_image_count > 0
                         || !swap_capabilities.present_modes.is_empty()

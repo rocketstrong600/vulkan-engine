@@ -6,7 +6,7 @@ use crate::utils::GameInfo;
 use ash::{vk, Entry, Instance};
 use std::error;
 use std::ffi::c_char;
-use surface::VKSurface;
+use surface::{VKSurface, VKSwapchain};
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 
@@ -81,6 +81,7 @@ impl Drop for VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext {
+    pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
     pub vulkan_device: VKDevice,
     pub vulkan_instance: VKInstance,
@@ -92,10 +93,12 @@ impl VKContext {
         let vulkan_instance = VKInstance::new(game_info, Some(vk_instance_ext))?;
         let vulkan_surface = VKSurface::new(&vulkan_instance, window)?;
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
+        let vulkan_swapchain = VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface)?;
         Ok(Self {
             vulkan_instance,
             vulkan_device,
             vulkan_surface,
+            vulkan_swapchain,
         })
     }
 }
