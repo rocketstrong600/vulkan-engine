@@ -167,15 +167,11 @@ impl VKDevice {
         // return device if score was greater than 0
         Ok((*physical_device.1, physical_device.2))
     }
-}
 
-impl Drop for VKDevice {
-    fn drop(&mut self) {
-        unsafe {
-            //must be dropped before instance
-            self.device.device_wait_idle().unwrap();
-            self.device.destroy_device(None);
-        };
+    /// Device must be destroyed before the instance
+    pub unsafe fn destroy(&self) {
+        self.device.device_wait_idle().unwrap();
+        self.device.destroy_device(None);
     }
 }
 

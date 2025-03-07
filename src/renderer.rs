@@ -69,13 +69,9 @@ impl VKInstance {
 
         Ok(instance)
     }
-}
 
-impl Drop for VKInstance {
-    fn drop(&mut self) {
-        unsafe {
-            self.instance.destroy_instance(None);
-        }
+    pub unsafe fn destroy(&self) {
+        self.instance.destroy_instance(None);
     }
 }
 
@@ -100,6 +96,17 @@ impl VKContext {
             vulkan_surface,
             vulkan_swapchain,
         })
+    }
+}
+
+impl Drop for VKContext {
+    fn drop(&mut self) {
+        unsafe {
+            self.vulkan_swapchain.destroy(&self.vulkan_device);
+            self.vulkan_surface.destroy();
+            self.vulkan_device.destroy();
+            self.vulkan_instance.destroy();
+        }
     }
 }
 

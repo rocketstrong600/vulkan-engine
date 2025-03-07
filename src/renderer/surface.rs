@@ -49,13 +49,9 @@ impl VKSurface {
             )
         }
     }
-}
 
-impl Drop for VKSurface {
-    fn drop(&mut self) {
-        unsafe {
-            self.surface_loader.destroy_surface(self.surface, None);
-        }
+    pub unsafe fn destroy(&self) {
+        self.surface_loader.destroy_surface(self.surface, None);
     }
 }
 
@@ -149,6 +145,7 @@ impl VKSwapchainCapabilities {
 pub struct VKSwapchain {
     // Swapchain starts of as none, can also be invalidated by setting to None ie window Resize
     pub swapchain: vk::SwapchainKHR,
+    pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
@@ -159,7 +156,7 @@ impl VKSwapchain {
         vk_instance: &VKInstance,
         vk_device: &VKDevice,
         vk_surface: &VKSurface,
-    ) -> Result<Self, ash::vk::Result> {
+    ) -> Result<Self, vk::Result> {
         let physical_device = vk_device.p_device.clone(); // cheap and safe to clone
         let instance = &vk_instance.instance;
         let device = &vk_device.device;
@@ -187,22 +184,61 @@ impl VKSwapchain {
         let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None)? };
 
         let images = unsafe { swapchain_loader.get_swapchain_images(swapchain)? };
+
+        let image_views =
+            Self::create_image_views(&images, ideal_surface_format.format, vk_device)?;
         Ok(Self {
             swapchain,
+            image_views,
             images,
             swapchain_loader,
             capibilities,
         })
     }
 
-    pub fn rebuild_swapchain(self) {}
-}
-
-impl Drop for VKSwapchain {
-    fn drop(&mut self) {
-        unsafe {
-            self.swapchain_loader
-                .destroy_swapchain(self.swapchain, None)
-        };
+    fn create_image_views(
+        swapchain_images: &Vec<vk::Image>,
+        image_format: vk::Format,
+        vk_device: &VKDevice,
+    ) -> Result<Vec<vk::ImageView>, vk::Result> {
+        Ok(swapchain_images
+            .iter()
+            .map(|image| {
+                let image_view_create_info = vk::ImageViewCreateInfo::default()
+                    .image(*image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(image_format)
+                    .components(
+                        vk::ComponentMapping::default()
+                            .r(vk::ComponentSwizzle::IDENTITY)
+                            .g(vk::ComponentSwizzle::IDENTITY)
+                            .b(vk::ComponentSwizzle::IDENTITY)
+                            .a(vk::ComponentSwizzle::IDENTITY),
+                    )
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .base_mip_level(0)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(1),
+                    );
+                unsafe {
+                    vk_device
+                        .device
+                        .create_image_view(&image_view_create_info, None)
+                }
+            })
+            .collect::<Result<Vec<vk::ImageView>, vk::Result>>())?
     }
+
+    pub unsafe fn destroy(&self, vk_device: &VKDevice) {
+        self.image_views
+            .iter()
+            .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
+        self.swapchain_loader
+            .destroy_swapchain(self.swapchain, None);
+    }
+
+    pub fn rebuild_swapchain(self) {}
 }
