@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::renderer::device::VKDevice;
 
-struct VKShader<'a> {
+pub struct VKShader<'a> {
     pub shader_module: vk::ShaderModule,
     pub shader_info: vk::PipelineShaderStageCreateInfo<'a>,
 }

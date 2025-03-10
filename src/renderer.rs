@@ -4,7 +4,9 @@ pub mod surface;
 
 use crate::renderer::device::VKDevice;
 use crate::utils::GameInfo;
+use ash::vk::ShaderStageFlags;
 use ash::{vk, Entry, Instance};
+use shader::{VKShader, VKShaderLoader};
 use std::error;
 use std::ffi::c_char;
 use surface::{VKSurface, VKSwapchain};
@@ -78,6 +80,7 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext {
+    pub vulkan_shader_loader: VKShaderLoader<&'static str>,
     pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
     pub vulkan_device: VKDevice,
@@ -91,11 +94,30 @@ impl VKContext {
         let vulkan_surface = VKSurface::new(&vulkan_instance, window)?;
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
         let vulkan_swapchain = VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface)?;
+        let mut vulkan_shader_loader = VKShaderLoader::default();
+
+        let vertex_shader = VKShader::new(
+            &vulkan_device,
+            "shaders/triangle.spv",
+            ShaderStageFlags::VERTEX,
+            c"vertexMain",
+            &mut vulkan_shader_loader,
+        );
+
+        let fragment_shader = VKShader::new(
+            &vulkan_device,
+            "shaders/triangle.spv",
+            ShaderStageFlags::FRAGMENT,
+            c"fragMain",
+            &mut vulkan_shader_loader,
+        );
+
         Ok(Self {
             vulkan_instance,
             vulkan_device,
             vulkan_surface,
             vulkan_swapchain,
+            vulkan_shader_loader,
         })
     }
 }
