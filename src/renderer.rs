@@ -1,4 +1,5 @@
 pub mod device;
+pub mod shader;
 pub mod surface;
 
 use crate::renderer::device::VKDevice;

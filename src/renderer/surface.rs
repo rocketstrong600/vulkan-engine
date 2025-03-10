@@ -9,7 +9,7 @@ use winit::{
     window::Window,
 };
 
-use super::device::{VKDevice, VKDeviceRequirments};
+use super::device::VKDevice;
 
 pub struct VKSurface {
     pub surface: vk::SurfaceKHR,
@@ -206,15 +206,15 @@ impl VKSwapchain {
             .map(|image| {
                 let image_view_create_info = vk::ImageViewCreateInfo::default()
                     .image(*image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(image_format)
+                    .view_type(vk::ImageViewType::TYPE_2D) // it is a 2d image
+                    .format(image_format) // the colour format matches the swapchain
                     .components(
                         vk::ComponentMapping::default()
                             .r(vk::ComponentSwizzle::IDENTITY)
                             .g(vk::ComponentSwizzle::IDENTITY)
                             .b(vk::ComponentSwizzle::IDENTITY)
                             .a(vk::ComponentSwizzle::IDENTITY),
-                    )
+                    ) // no components are Swizzled aka swapped or changed
                     .subresource_range(
                         vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -222,7 +222,7 @@ impl VKSwapchain {
                             .level_count(1)
                             .base_array_layer(0)
                             .layer_count(1),
-                    );
+                    ); // 1 colour resource spanning the whole image
                 unsafe {
                     vk_device
                         .device
