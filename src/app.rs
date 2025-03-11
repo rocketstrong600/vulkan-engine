@@ -12,13 +12,13 @@ use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::Window;
 use winit::window::WindowId;
 
-pub struct AppCTX {
+pub struct AppCTX<'a> {
     pub game_info: GameInfo,
     pub window: Window,
-    pub vulkan_ctx: VKContext,
+    pub vulkan_ctx: VKContext<'a>,
 }
 
-impl AppCTX {
+impl AppCTX<'_> {
     fn new(game_info: GameInfo, event_loop: &ActiveEventLoop) -> Self {
         let window = event_loop
             .create_window(
@@ -36,12 +36,12 @@ impl AppCTX {
     }
 }
 
-pub enum App {
-    Initialised(AppCTX),
+pub enum App<'a> {
+    Initialised(AppCTX<'a>),
     Uninitialised { game_info: GameInfo },
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let App::Uninitialised { .. } = self {
             self.init(event_loop);
@@ -68,9 +68,9 @@ impl ApplicationHandler for App {
     }
 }
 
-impl<F> ReplaceWith<F> for App {}
+impl<F> ReplaceWith<F> for App<'_> {}
 
-impl App {
+impl App<'_> {
     pub fn new(game_info: GameInfo) -> Self {
         App::Uninitialised { game_info }
     }

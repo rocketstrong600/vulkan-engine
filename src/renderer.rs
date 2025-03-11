@@ -73,21 +73,26 @@ impl VKInstance {
         Ok(instance)
     }
 
-    pub unsafe fn destroy(&self) {
+    /// # Safety
+    /// Instance should be Destroyed After All Other Vulkan Objects
+    /// Read VK Docs For Destruction Order
+    pub unsafe fn destroy(&mut self) {
         self.instance.destroy_instance(None);
     }
 }
 
 //Safe Destruction Order structs drop from top to bottom.
-pub struct VKContext {
+pub struct VKContext<'a> {
     pub vulkan_shader_loader: VKShaderLoader<&'static str>,
     pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
     pub vulkan_device: VKDevice,
     pub vulkan_instance: VKInstance,
+    pub vertex_shader: VKShader<'a>,
+    pub fragment_shader: VKShader<'a>,
 }
 
-impl VKContext {
+impl VKContext<'_> {
     pub fn new(game_info: &GameInfo, window: &Window) -> Result<Self, Box<dyn error::Error>> {
         let vk_instance_ext = display_vk_ext(window)?;
         let vulkan_instance = VKInstance::new(game_info, Some(vk_instance_ext))?;
@@ -102,7 +107,7 @@ impl VKContext {
             ShaderStageFlags::VERTEX,
             c"vertexMain",
             &mut vulkan_shader_loader,
-        );
+        )?;
 
         let fragment_shader = VKShader::new(
             &vulkan_device,
@@ -110,7 +115,7 @@ impl VKContext {
             ShaderStageFlags::FRAGMENT,
             c"fragMain",
             &mut vulkan_shader_loader,
-        );
+        )?;
 
         Ok(Self {
             vulkan_instance,
@@ -118,13 +123,17 @@ impl VKContext {
             vulkan_surface,
             vulkan_swapchain,
             vulkan_shader_loader,
+            vertex_shader,
+            fragment_shader,
         })
     }
 }
 
-impl Drop for VKContext {
+impl Drop for VKContext<'_> {
     fn drop(&mut self) {
         unsafe {
+            self.fragment_shader.destroy(&self.vulkan_device);
+            self.vertex_shader.destroy(&self.vulkan_device);
             self.vulkan_swapchain.destroy(&self.vulkan_device);
             self.vulkan_surface.destroy();
             self.vulkan_device.destroy();

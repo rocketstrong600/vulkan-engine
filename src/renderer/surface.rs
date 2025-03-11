@@ -50,7 +50,10 @@ impl VKSurface {
         }
     }
 
-    pub unsafe fn destroy(&self) {
+    /// # Safety
+    /// Destroy Before Vulkan Instance
+    /// Read VK Docs For Destruction Order
+    pub unsafe fn destroy(&mut self) {
         self.surface_loader.destroy_surface(self.surface, None);
     }
 }
@@ -103,7 +106,7 @@ impl VKSwapchainCapabilities {
             .iter()
             .cloned()
             .find(|surface_format| surface_format.format == vk::Format::B8G8R8A8_SRGB)
-            .unwrap_or(self.surface_formats[0].clone())
+            .unwrap_or(self.surface_formats[0])
     }
 
     // Tries to return number of images for tripple buffering if that does not work then tries double buffering else min
@@ -157,7 +160,7 @@ impl VKSwapchain {
         vk_device: &VKDevice,
         vk_surface: &VKSurface,
     ) -> Result<Self, vk::Result> {
-        let physical_device = vk_device.p_device.clone(); // cheap and safe to clone
+        let physical_device = vk_device.p_device;
         let instance = &vk_instance.instance;
         let device = &vk_device.device;
 
@@ -197,7 +200,7 @@ impl VKSwapchain {
     }
 
     fn create_image_views(
-        swapchain_images: &Vec<vk::Image>,
+        swapchain_images: &[vk::Image],
         image_format: vk::Format,
         vk_device: &VKDevice,
     ) -> Result<Vec<vk::ImageView>, vk::Result> {
@@ -232,7 +235,10 @@ impl VKSwapchain {
             .collect::<Result<Vec<vk::ImageView>, vk::Result>>())?
     }
 
-    pub unsafe fn destroy(&self, vk_device: &VKDevice) {
+    /// # Safety
+    /// Destroy Before Vulkan Device
+    /// Read VK Docs For Destruction Order
+    pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
         self.image_views
             .iter()
             .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));

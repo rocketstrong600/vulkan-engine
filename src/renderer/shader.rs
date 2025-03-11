@@ -13,7 +13,7 @@ pub struct VKShader<'a> {
     pub shader_info: vk::PipelineShaderStageCreateInfo<'a>,
 }
 
-impl<'a> VKShader<'a> {
+impl VKShader<'_> {
     pub fn new(
         vk_device: &VKDevice,
         shader_path: &'static str,
@@ -36,12 +36,13 @@ impl<'a> VKShader<'a> {
         })
     }
 
-    pub fn destroy(&mut self, vk_device: &VKDevice) {
-        unsafe {
-            vk_device
-                .device
-                .destroy_shader_module(self.shader_module, None)
-        };
+    /// # Safety
+    /// Destroy Before Vulkan Device
+    /// Read VK Docs For Destruction Order
+    pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
+        vk_device
+            .device
+            .destroy_shader_module(self.shader_module, None);
     }
 }
 

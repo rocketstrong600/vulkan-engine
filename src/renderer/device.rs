@@ -168,12 +168,17 @@ impl VKDevice {
         Ok((*physical_device.1, physical_device.2))
     }
 
+    /// # Safety
+    /// Read VK Docs For Destruction Order
     /// Device must be destroyed before the instance
-    pub unsafe fn destroy(&self) {
+    pub unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
         self.device.destroy_device(None);
     }
 }
+
+/// Function for Checking Requirments
+type ReqFn<'a> = Box<dyn Fn(&vk::PhysicalDevice, &Instance, Option<&VKSurface>) -> bool + 'a>;
 
 /// Struct for holding and testing Device Requirments
 /// Example Use:
@@ -184,8 +189,7 @@ impl VKDevice {
 /// ```
 pub struct VKDeviceRequirments<'a> {
     required_extentions: Vec<&'static CStr>,
-    requirement_functions:
-        Vec<Box<dyn Fn(&vk::PhysicalDevice, &Instance, Option<&VKSurface>) -> bool + 'a>>,
+    requirement_functions: Vec<ReqFn<'a>>,
     required_queue_flags: vk::QueueFlags,
 }
 
@@ -196,7 +200,7 @@ impl<'a> VKDeviceRequirments<'a> {
         self
     }
 
-    /// Adds a 'fn(vk::PhysicalDevice, &Instance) -> bool' to the device compatability check process
+    /// Adds a 'fn(vk::PhysicalDevice, &Instance, Option<&VKSurface>) -> bool' to the device compatability check process
     /// fn must return whether device meats functions requirments.
     pub fn push_fn<F>(mut self, fn_test: F) -> Self
     where
@@ -282,7 +286,7 @@ impl<'a> VKDeviceRequirments<'a> {
     }
 }
 
-impl<'a> Default for VKDeviceRequirments<'a> {
+impl Default for VKDeviceRequirments<'_> {
     fn default() -> Self {
         Self {
             required_extentions: Vec::new(),
