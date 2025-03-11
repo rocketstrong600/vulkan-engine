@@ -60,7 +60,7 @@ where
     P: AsRef<Path> + Eq + Hash + Clone,
 {
     pub fn load_shader(&mut self, path: P) -> Result<&Vec<u32>, std::io::Error> {
-        if path.as_ref().extension().and_then(|ext| ext.to_str()) == Some("spirv") {
+        if path.as_ref().extension().and_then(|ext| ext.to_str()) == Some("spv") {
             let file_data = self.files.entry(path).or_insert_with_key(|path| {
                 let mut file = File::open(path)?;
                 read_spv(&mut file)
