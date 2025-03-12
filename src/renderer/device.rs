@@ -21,10 +21,17 @@ impl VKDevice {
         // With the possibility for the Engine user to append their own-
         // requirments, Possibly by requesting a mutable reference to-
         // base extentions before device setup.
-        let dev_requirments = VKDeviceRequirments::default()
+        let mut dev_requirments = VKDeviceRequirments::default()
             .add_queue_flag(vk::QueueFlags::GRAPHICS)
-            .push_ext(khr::dynamic_rendering::NAME)
             .push_ext(khr::swapchain::NAME)
+            .push_ext(khr::dynamic_rendering::NAME)
+            .push_ext(khr::synchronization2::NAME)
+            .push_info(
+                vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true),
+            )
+            .push_info(
+                vk::PhysicalDeviceSynchronization2FeaturesKHR::default().synchronization2(true),
+            )
             .push_fn(|physical_device, instance, _| {
                 let device_properties =
                     unsafe { instance.get_physical_device_properties(*physical_device) };
@@ -96,15 +103,25 @@ impl VKDevice {
         let device_extension_names = dev_requirments.get_requirments_raw();
 
         // Dynamic Rendering Ext configuration
-        // Feature Configuration Should probably be settable Outside of here maybe in Device Requirments Struct
-        let mut dynamic_rendering_feature =
-            vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
+        // Syncronization2 Ext configuration
+        // TODO: Feature Configuration Should probably be settable Outside of here maybe in Device Requirments Struct
+        // let mut dynamic_rendering_feature =
+        // vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
+
+        // let mut synchronization2_feature =
+        // vk::PhysicalDeviceSynchronization2FeaturesKHR::default().synchronization2(true);
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .enabled_extension_names(&device_extension_names)
             .enabled_features(&features)
-            .queue_create_infos(std::slice::from_ref(&queue_create_infos))
-            .push_next(&mut dynamic_rendering_feature);
+            .queue_create_infos(std::slice::from_ref(&queue_create_infos));
+
+        let device_create_info = dev_requirments
+            .device_extended_info
+            .iter_mut()
+            .fold(device_create_info, |dev_info, info| {
+                dev_info.push_next(info.as_mut())
+            });
 
         //Create Logical Device
         let device = unsafe {
@@ -188,15 +205,26 @@ type ReqFn<'a> = Box<dyn Fn(&vk::PhysicalDevice, &Instance, Option<&VKSurface>) 
 /// printf("Compatible {:?}", DeviceRequirments.check_device(physical_device));
 /// ```
 pub struct VKDeviceRequirments<'a> {
-    required_extentions: Vec<&'static CStr>,
-    requirement_functions: Vec<ReqFn<'a>>,
-    required_queue_flags: vk::QueueFlags,
+    pub required_extentions: Vec<&'static CStr>,
+    pub device_extended_info: Vec<Box<dyn vk::ExtendsDeviceCreateInfo + 'a>>,
+    pub requirement_functions: Vec<ReqFn<'a>>,
+    pub required_queue_flags: vk::QueueFlags,
 }
 
 impl<'a> VKDeviceRequirments<'a> {
     /// Adds a vulkan extention name to the requirments
     pub fn push_ext(mut self, ext_name: &'static CStr) -> Self {
         self.required_extentions.push(ext_name);
+        self
+    }
+
+    /// Adds Structures that extend the creation of logical Devices to the requirments
+    /// This is so they can be used on logical Device creation
+    pub fn push_info<T>(mut self, dev_ext_info: T) -> Self
+    where
+        T: vk::ExtendsDeviceCreateInfo + 'a,
+    {
+        self.device_extended_info.push(Box::new(dev_ext_info));
         self
     }
 
@@ -290,6 +318,7 @@ impl Default for VKDeviceRequirments<'_> {
     fn default() -> Self {
         Self {
             required_extentions: Vec::new(),
+            device_extended_info: Vec::new(),
             requirement_functions: Vec::new(),
             required_queue_flags: QueueFlags::empty(),
         }

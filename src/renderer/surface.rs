@@ -150,6 +150,7 @@ pub struct VKSwapchain {
     pub swapchain: vk::SwapchainKHR,
     pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
+    pub img_semaphores: Vec<vk::Semaphore>,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
 }
@@ -190,10 +191,13 @@ impl VKSwapchain {
 
         let image_views =
             Self::create_image_views(&images, ideal_surface_format.format, vk_device)?;
+
+        let img_semaphores = Self::create_image_semaphores(vk_device, images.len())?;
         Ok(Self {
             swapchain,
             image_views,
             images,
+            img_semaphores,
             swapchain_loader,
             capibilities,
         })
@@ -235,10 +239,27 @@ impl VKSwapchain {
             .collect::<Result<Vec<vk::ImageView>, vk::Result>>())?
     }
 
+    fn create_image_semaphores(
+        device: &VKDevice,
+        count: usize,
+    ) -> Result<Vec<vk::Semaphore>, vk::Result> {
+        let mut semaphores = Vec::<vk::Semaphore>::new();
+
+        let create_info = vk::SemaphoreCreateInfo::default();
+
+        for _ in 0..count {
+            semaphores.push(unsafe { device.device.create_semaphore(&create_info, None)? });
+        }
+        Ok(semaphores)
+    }
+
     /// # Safety
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
+        self.img_semaphores
+            .iter()
+            .for_each(|is| vk_device.device.destroy_semaphore(*is, None));
         self.image_views
             .iter()
             .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
