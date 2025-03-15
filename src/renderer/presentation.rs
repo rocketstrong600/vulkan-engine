@@ -1,7 +1,7 @@
 use crate::renderer::VKInstance;
 use ash::{
     khr::{surface, swapchain},
-    vk,
+    vk::{self, Handle},
 };
 use std::error;
 use winit::{
@@ -114,16 +114,14 @@ impl VKSwapchainCapabilities {
         let mut image_count = self.surface_capibilities.min_image_count;
 
         if self.surface_capibilities.min_image_count <= 3 {
-            if self.surface_capibilities.max_image_count >= 2
-                || self.surface_capibilities.max_image_count == 0
-            {
-                image_count = 2
-            }
-
             if self.surface_capibilities.max_image_count >= 3
                 || self.surface_capibilities.max_image_count == 0
             {
                 image_count = 3
+            } else if self.surface_capibilities.max_image_count >= 2
+                || self.surface_capibilities.max_image_count == 0
+            {
+                image_count = 2
             }
         }
 
@@ -150,7 +148,7 @@ pub struct VKSwapchain {
     pub swapchain: vk::SwapchainKHR,
     pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
-    pub img_semaphores: Vec<vk::Semaphore>,
+    pub img_fences: Vec<vk::Fence>,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
 }
@@ -192,12 +190,17 @@ impl VKSwapchain {
         let image_views =
             Self::create_image_views(&images, ideal_surface_format.format, vk_device)?;
 
-        let img_semaphores = Self::create_image_semaphores(vk_device, images.len())?;
+        let mut img_fences = Vec::new();
+
+        images
+            .iter()
+            .for_each(|_| img_fences.push(vk::Fence::null()));
+
         Ok(Self {
             swapchain,
             image_views,
             images,
-            img_semaphores,
+            img_fences,
             swapchain_loader,
             capibilities,
         })
@@ -239,27 +242,15 @@ impl VKSwapchain {
             .collect::<Result<Vec<vk::ImageView>, vk::Result>>())?
     }
 
-    fn create_image_semaphores(
-        device: &VKDevice,
-        count: usize,
-    ) -> Result<Vec<vk::Semaphore>, vk::Result> {
-        let mut semaphores = Vec::<vk::Semaphore>::new();
-
-        let create_info = vk::SemaphoreCreateInfo::default();
-
-        for _ in 0..count {
-            semaphores.push(unsafe { device.device.create_semaphore(&create_info, None)? });
-        }
-        Ok(semaphores)
-    }
-
     /// # Safety
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
-        self.img_semaphores
-            .iter()
-            .for_each(|is| vk_device.device.destroy_semaphore(*is, None));
+        self.img_fences.iter().for_each(|ifence| {
+            if !ifence.is_null() {
+                vk_device.device.destroy_fence(*ifence, None)
+            }
+        });
         self.image_views
             .iter()
             .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
@@ -268,4 +259,12 @@ impl VKSwapchain {
     }
 
     pub fn rebuild_swapchain(self) {}
+}
+
+/// Manages Syncronisation objects and part of algo for presenting to screen
+pub struct SwapPresent {
+    pub i_f_frame: i32,                          // current frame in flight
+    pub max_frames_i_f: i32,                     // max Frames gpu can work on
+    pub img_semaphores: Vec<vk::Semaphore>,      // Image Aquired Semaphore
+    pub rendered_semaphores: Vec<vk::Semaphore>, // render Finished Semaphore
 }

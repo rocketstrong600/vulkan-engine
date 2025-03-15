@@ -1,15 +1,15 @@
 pub mod device;
+pub mod presentation;
 pub mod shader;
-pub mod surface;
 
 use crate::renderer::device::VKDevice;
 use crate::utils::GameInfo;
 use ash::vk::ShaderStageFlags;
 use ash::{vk, Entry, Instance};
+use presentation::{VKSurface, VKSwapchain};
 use shader::{VKShader, VKShaderLoader};
 use std::error;
 use std::ffi::c_char;
-use surface::{VKSurface, VKSwapchain};
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 

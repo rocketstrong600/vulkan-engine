@@ -4,7 +4,7 @@ use log::info;
 use std::error;
 use std::ffi::CStr;
 
-use crate::renderer::surface::{VKSurface, VKSwapchainCapabilities};
+use crate::renderer::presentation::{VKSurface, VKSwapchainCapabilities};
 use crate::renderer::VKInstance;
 pub struct VKDevice {
     pub p_device: vk::PhysicalDevice,
@@ -26,11 +26,13 @@ impl VKDevice {
             .push_ext(khr::swapchain::NAME)
             .push_ext(khr::dynamic_rendering::NAME)
             .push_ext(khr::synchronization2::NAME)
+            .push_ext(khr::timeline_semaphore::NAME)
             .push_info(
-                vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true),
+                vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true),
             )
+            .push_info(vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true))
             .push_info(
-                vk::PhysicalDeviceSynchronization2FeaturesKHR::default().synchronization2(true),
+                vk::PhysicalDeviceTimelineSemaphoreFeatures::default().timeline_semaphore(true),
             )
             .push_fn(|physical_device, instance, _| {
                 let device_properties =
