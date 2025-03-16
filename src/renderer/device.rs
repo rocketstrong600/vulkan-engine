@@ -278,7 +278,7 @@ impl<'a> VKDeviceRequirments<'a> {
         let funcs_passes = self
             .requirement_functions
             .iter()
-            .any(|func| func(physical_device, instance, surface_requirment));
+            .all(|func| func(physical_device, instance, surface_requirment));
 
         let queue_family_prop =
             unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
