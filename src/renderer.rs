@@ -83,6 +83,7 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext<'a> {
+    pub vulkan_cmd_pool: vk::CommandPool,
     pub vulkan_shader_loader: VKShaderLoader<&'static str>,
     pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
@@ -100,6 +101,13 @@ impl VKContext<'_> {
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
         let vulkan_swapchain = VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface)?;
         let mut vulkan_shader_loader = VKShaderLoader::default();
+        let cmd_pool_info = vk::CommandPoolCreateInfo::default()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let vulkan_cmd_pool = unsafe {
+            vulkan_device
+                .device
+                .create_command_pool(&cmd_pool_info, None)?
+        };
 
         let vertex_shader = VKShader::new(
             &vulkan_device,
@@ -118,6 +126,7 @@ impl VKContext<'_> {
         )?;
 
         Ok(Self {
+            vulkan_cmd_pool,
             vulkan_instance,
             vulkan_device,
             vulkan_surface,

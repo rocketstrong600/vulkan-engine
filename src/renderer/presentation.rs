@@ -1,7 +1,7 @@
 use crate::renderer::VKInstance;
 use ash::{
     khr::{surface, swapchain},
-    vk::{self, Handle},
+    vk::{self, Handle, SemaphoreCreateFlags},
 };
 use std::error;
 use winit::{
@@ -256,15 +256,72 @@ impl VKSwapchain {
             .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
         self.swapchain_loader
             .destroy_swapchain(self.swapchain, None);
+
+        self.img_fences.clear();
     }
 
     pub fn rebuild_swapchain(self) {}
 }
 
 /// Manages Syncronisation objects and part of algo for presenting to screen
+#[derive(Default)]
 pub struct SwapPresent {
-    pub i_f_frame: i32,                          // current frame in flight
-    pub max_frames_i_f: i32,                     // max Frames gpu can work on
+    frame: u32,                                  // current frame in flight
+    max_frames: u32,                             // max Frames gpu can work on
     pub img_semaphores: Vec<vk::Semaphore>,      // Image Aquired Semaphore
     pub rendered_semaphores: Vec<vk::Semaphore>, // render Finished Semaphore
+}
+
+impl SwapPresent {
+    pub fn get_max_frames(self) -> u32 {
+        self.max_frames
+    }
+
+    /// Sets max frames in flight 2 is a good number
+    /// Should not be higher than the number of images in the swapchain
+    ///# Safety
+    /// Recreats Sync Objects by destroying
+    /// Don't Destroy Vulkan Device before/while using
+    pub unsafe fn max_frames(
+        mut self,
+        frames: u32,
+        vk_device: &VKDevice,
+    ) -> Result<Self, vk::Result> {
+        self.max_frames = frames;
+        Ok(self.recreate_sync(vk_device)?)
+    }
+
+    unsafe fn recreate_sync(mut self, vk_device: &VKDevice) -> Result<Self, vk::Result> {
+        self.destroy(vk_device);
+
+        for _ in 0..self.max_frames {
+            let create_info = vk::SemaphoreCreateInfo::default();
+            let img_semaphore = vk_device.device.create_semaphore(&create_info, None)?;
+            self.img_semaphores.push(img_semaphore);
+
+            let renderd_semaphore = vk_device.device.create_semaphore(&create_info, None)?;
+            self.rendered_semaphores.push(renderd_semaphore);
+        }
+        Ok(self)
+    }
+
+    /// # Safety
+    /// Destroy Before Vulkan Device
+    /// Read VK Docs For Destruction Order
+    /// Don't use destroyed Handles
+    pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
+        self.img_semaphores.iter().for_each(|semaphore| {
+            if !semaphore.is_null() {
+                vk_device.device.destroy_semaphore(*semaphore, None);
+            }
+        });
+        self.rendered_semaphores.iter().for_each(|semaphore| {
+            if !semaphore.is_null() {
+                vk_device.device.destroy_semaphore(*semaphore, None);
+            }
+        });
+
+        self.img_semaphores.clear();
+        self.rendered_semaphores.clear();
+    }
 }
