@@ -1,7 +1,7 @@
 use crate::renderer::VKInstance;
 use ash::{
     khr::{surface, swapchain},
-    vk::{self, Handle, SemaphoreCreateFlags},
+    vk::{self, FenceCreateFlags, Handle, SemaphoreCreateFlags},
 };
 use std::error;
 use winit::{
@@ -148,7 +148,7 @@ pub struct VKSwapchain {
     pub swapchain: vk::SwapchainKHR,
     pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
-    pub img_fences: Vec<vk::Fence>,
+    pub img_in_flight: Vec<vk::Fence>,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
 }
@@ -200,7 +200,7 @@ impl VKSwapchain {
             swapchain,
             image_views,
             images,
-            img_fences,
+            img_in_flight: img_fences,
             swapchain_loader,
             capibilities,
         })
@@ -246,7 +246,7 @@ impl VKSwapchain {
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
-        self.img_fences.iter().for_each(|ifence| {
+        self.img_in_flight.iter().for_each(|ifence| {
             if !ifence.is_null() {
                 vk_device.device.destroy_fence(*ifence, None)
             }
@@ -257,19 +257,21 @@ impl VKSwapchain {
         self.swapchain_loader
             .destroy_swapchain(self.swapchain, None);
 
-        self.img_fences.clear();
+        self.img_in_flight.clear();
     }
 
     pub fn rebuild_swapchain(self) {}
 }
 
 /// Manages Syncronisation objects and part of algo for presenting to screen
+// TODO: investigate timeline semaphores for sync arround the swapchain such as render completion
 #[derive(Default)]
 pub struct SwapPresent {
-    frame: u32,                              // current frame in flight
-    max_frames: u32,                         // max Frames gpu can work on
-    img_semaphores: Vec<vk::Semaphore>,      // Image Aquired Semaphore
-    rendered_semaphores: Vec<vk::Semaphore>, // render Finished Semaphore
+    frame: u32,                            // current frame in flight
+    max_frames: u32,                       // max Frames gpu can work on
+    img_available_gpu: Vec<vk::Semaphore>, // Image Aquired Semaphore
+    img_rendered_gpu: Vec<vk::Semaphore>,  // render Finished Semaphore
+    img_rendered_cpu: Vec<vk::Fence>,      // render Finshed CPU Fence
 }
 
 impl SwapPresent {
@@ -289,10 +291,23 @@ impl SwapPresent {
         vk_device: &VKDevice,
     ) -> Result<Self, vk::Result> {
         self.max_frames = frames;
+        self.frame = self.frame % self.max_frames;
         Ok(self.recreate_sync(vk_device)?)
     }
 
+    /// wait on img_rendered_cpu fence
+    pub fn wait_rendered(&self, vk_device: &VKDevice) -> Result<(), vk::Result> {
+        unsafe {
+            vk_device.device.wait_for_fences(
+                &[*self.get_img_rendered().ok_or(vk::Result::INCOMPLETE)?.1],
+                true,
+                u64::MAX,
+            )
+        }
+    }
+
     /// returns aquired image and semaphore
+    /// for when image is ready
     // TODO: Handle subobtimal or invalidaed swapchain
     pub fn aquire_img(&self, swapchain: &VKSwapchain) -> Result<u32, vk::Result> {
         unsafe {
@@ -300,13 +315,56 @@ impl SwapPresent {
             let (index, _) = swapchain.swapchain_loader.acquire_next_image(
                 swapchain.swapchain,
                 u64::MAX,
-                *self.get_img_semaphore().ok_or(vk::Result::INCOMPLETE)?,
+                *self.get_img_available().ok_or(vk::Result::INCOMPLETE)?,
                 vk::Fence::null(),
             )?;
             Ok(index)
         }
     }
 
+    /// This is for waiting on the specific swapchain img in flight.
+    /// use after aquire image.
+    /// this prevents situations where the swapchain give us a particular image that is being worked on.
+    // it's hard to avoid this check because we don't know what image we are going to get from the
+    // swapchain.
+    pub fn wait_img_in_flight(
+        &self,
+        vk_device: &VKDevice,
+        swapchain: &VKSwapchain,
+        image_index: u32,
+    ) -> Result<(), vk::Result> {
+        let in_flight_img = swapchain
+            .img_in_flight
+            .get(image_index as usize)
+            .ok_or(vk::Result::INCOMPLETE)?;
+
+        if !in_flight_img.is_null() {
+            unsafe {
+                vk_device
+                    .device
+                    .wait_for_fences(&[*in_flight_img], true, u64::MAX)?
+            }
+        }
+        Ok(())
+    }
+
+    /// links fence for the image in the swapchain with our current in flight frame
+    pub fn link_img_in_flight(
+        &self,
+        swapchain: &mut VKSwapchain,
+        image_index: u32,
+    ) -> Result<(), vk::Result> {
+        let in_flight_img = self.get_img_rendered().ok_or(vk::Result::INCOMPLETE)?.1;
+        swapchain
+            .img_in_flight
+            .insert(image_index as usize, *in_flight_img);
+        Ok(())
+    }
+
+    /// waits on rendered semaphore
+    /// and then submits frame
+    /// image_index is index of image obtained from aquire_image
+    // TODO: Handle subobtimal or invalidaed swapchain
     pub fn submit_frame(
         &mut self,
         vk_device: &VKDevice,
@@ -314,9 +372,7 @@ impl SwapPresent {
         image_index: u32,
     ) -> Result<(), vk::Result> {
         let swapchains = &[swapchain.swapchain];
-        let semaphores = &[*self
-            .get_rendered_semaphore()
-            .ok_or(vk::Result::INCOMPLETE)?];
+        let semaphores = &[*self.get_img_rendered().ok_or(vk::Result::INCOMPLETE)?.0];
         let image_indices = &[image_index];
 
         let present_info = vk::PresentInfoKHR::default()
@@ -333,47 +389,74 @@ impl SwapPresent {
         Ok(())
     }
 
-    pub fn get_img_semaphore(&self) -> Option<&vk::Semaphore> {
-        self.img_semaphores.get(self.frame as usize)
+    /// Gets the relevent image available semaphore
+    /// this is signaled after aquire image is done
+    pub fn get_img_available(&self) -> Option<&vk::Semaphore> {
+        self.img_available_gpu.get(self.frame as usize)
     }
 
-    pub fn get_rendered_semaphore(&self) -> Option<&vk::Semaphore> {
-        self.rendered_semaphores.get(self.frame as usize)
+    /// Gets the relevent image rendered semaphore and fence
+    /// Signal this when rendering is done
+    /// so that submit frame can complete
+    pub fn get_img_rendered(&self) -> Option<(&vk::Semaphore, &vk::Fence)> {
+        Some((
+            self.img_rendered_gpu.get(self.frame as usize)?,
+            self.img_rendered_cpu.get(self.frame as usize)?,
+        ))
     }
 
+    // Recreates Sync Objects Such as Semaphores and Fences
     unsafe fn recreate_sync(mut self, vk_device: &VKDevice) -> Result<Self, vk::Result> {
         self.destroy(vk_device);
 
         for _ in 0..self.max_frames {
-            let create_info = vk::SemaphoreCreateInfo::default();
-            let img_semaphore = vk_device.device.create_semaphore(&create_info, None)?;
-            self.img_semaphores.push(img_semaphore);
+            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+            let img_semaphore = vk_device
+                .device
+                .create_semaphore(&semaphore_create_info, None)?;
+            self.img_available_gpu.push(img_semaphore);
 
-            let renderd_semaphore = vk_device.device.create_semaphore(&create_info, None)?;
-            self.rendered_semaphores.push(renderd_semaphore);
+            let renderd_semaphore = vk_device
+                .device
+                .create_semaphore(&semaphore_create_info, None)?;
+            self.img_rendered_gpu.push(renderd_semaphore);
+
+            let fence_create_info =
+                vk::FenceCreateInfo::default().flags(FenceCreateFlags::SIGNALED);
+            let renderd_fence = vk_device.device.create_fence(&fence_create_info, None)?;
+            self.img_rendered_cpu.push(renderd_fence);
         }
 
-        self.frame = self.frame % self.max_frames;
         Ok(self)
     }
 
+    /// Destroys Sync Objects
     /// # Safety
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
-    /// Don't use destroyed Handles
+    /// Don't use any destroyed Sync Handles
     pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
-        self.img_semaphores.iter().for_each(|semaphore| {
-            if !semaphore.is_null() {
-                vk_device.device.destroy_semaphore(*semaphore, None);
-            }
-        });
-        self.rendered_semaphores.iter().for_each(|semaphore| {
+        vk_device.device.device_wait_idle().unwrap_unchecked();
+        self.img_available_gpu.iter().for_each(|semaphore| {
             if !semaphore.is_null() {
                 vk_device.device.destroy_semaphore(*semaphore, None);
             }
         });
 
-        self.img_semaphores.clear();
-        self.rendered_semaphores.clear();
+        self.img_rendered_gpu.iter().for_each(|semaphore| {
+            if !semaphore.is_null() {
+                vk_device.device.destroy_semaphore(*semaphore, None);
+            }
+        });
+
+        self.img_rendered_cpu.iter().for_each(|fence| {
+            if !fence.is_null() {
+                vk_device.device.destroy_fence(*fence, None);
+            }
+        });
+
+        self.img_available_gpu.clear();
+        self.img_rendered_gpu.clear();
+        self.img_rendered_cpu.clear();
     }
 }
