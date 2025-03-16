@@ -266,10 +266,10 @@ impl VKSwapchain {
 /// Manages Syncronisation objects and part of algo for presenting to screen
 #[derive(Default)]
 pub struct SwapPresent {
-    frame: u32,                                  // current frame in flight
-    max_frames: u32,                             // max Frames gpu can work on
-    pub img_semaphores: Vec<vk::Semaphore>,      // Image Aquired Semaphore
-    pub rendered_semaphores: Vec<vk::Semaphore>, // render Finished Semaphore
+    frame: u32,                              // current frame in flight
+    max_frames: u32,                         // max Frames gpu can work on
+    img_semaphores: Vec<vk::Semaphore>,      // Image Aquired Semaphore
+    rendered_semaphores: Vec<vk::Semaphore>, // render Finished Semaphore
 }
 
 impl SwapPresent {
@@ -282,6 +282,7 @@ impl SwapPresent {
     ///# Safety
     /// Recreats Sync Objects by destroying
     /// Don't Destroy Vulkan Device before/while using
+    /// Don't Use while frames are in flight
     pub unsafe fn max_frames(
         mut self,
         frames: u32,
@@ -289,6 +290,55 @@ impl SwapPresent {
     ) -> Result<Self, vk::Result> {
         self.max_frames = frames;
         Ok(self.recreate_sync(vk_device)?)
+    }
+
+    /// returns aquired image and semaphore
+    // TODO: Handle subobtimal or invalidaed swapchain
+    pub fn aquire_img(&self, swapchain: &VKSwapchain) -> Result<u32, vk::Result> {
+        unsafe {
+            // _ is bool for suboptimal or invalid swapchain
+            let (index, _) = swapchain.swapchain_loader.acquire_next_image(
+                swapchain.swapchain,
+                u64::MAX,
+                *self.get_img_semaphore().ok_or(vk::Result::INCOMPLETE)?,
+                vk::Fence::null(),
+            )?;
+            Ok(index)
+        }
+    }
+
+    pub fn submit_frame(
+        &mut self,
+        vk_device: &VKDevice,
+        swapchain: &VKSwapchain,
+        image_index: u32,
+    ) -> Result<(), vk::Result> {
+        let swapchains = &[swapchain.swapchain];
+        let semaphores = &[*self
+            .get_rendered_semaphore()
+            .ok_or(vk::Result::INCOMPLETE)?];
+        let image_indices = &[image_index];
+
+        let present_info = vk::PresentInfoKHR::default()
+            .swapchains(swapchains)
+            .wait_semaphores(semaphores)
+            .image_indices(image_indices);
+
+        unsafe {
+            swapchain
+                .swapchain_loader
+                .queue_present(vk_device.graphics_queue, &present_info)?;
+        }
+        self.frame = self.frame + 1 % self.max_frames;
+        Ok(())
+    }
+
+    pub fn get_img_semaphore(&self) -> Option<&vk::Semaphore> {
+        self.img_semaphores.get(self.frame as usize)
+    }
+
+    pub fn get_rendered_semaphore(&self) -> Option<&vk::Semaphore> {
+        self.rendered_semaphores.get(self.frame as usize)
     }
 
     unsafe fn recreate_sync(mut self, vk_device: &VKDevice) -> Result<Self, vk::Result> {
@@ -302,6 +352,8 @@ impl SwapPresent {
             let renderd_semaphore = vk_device.device.create_semaphore(&create_info, None)?;
             self.rendered_semaphores.push(renderd_semaphore);
         }
+
+        self.frame = self.frame % self.max_frames;
         Ok(self)
     }
 
