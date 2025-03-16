@@ -264,6 +264,15 @@ impl VKSwapchain {
 }
 
 /// Manages Syncronisation objects and part of algo for presenting to screen
+/// when rendering a frame
+/// use in this order:
+/// wait_rendered
+/// aquire_img
+/// wait_img_in_flight
+/// link_img_in_flight
+/// Submit Your Command Buffers with img_rendered_semaphore and reset img_rendered fence
+/// Present Frame
+/// increment_frame
 // TODO: investigate timeline semaphores for sync arround the swapchain such as render completion
 #[derive(Default)]
 pub struct SwapPresent {
@@ -365,8 +374,8 @@ impl SwapPresent {
     /// and then submits frame
     /// image_index is index of image obtained from aquire_image
     // TODO: Handle subobtimal or invalidaed swapchain
-    pub fn submit_frame(
-        &mut self,
+    pub fn present_frame(
+        &self,
         vk_device: &VKDevice,
         swapchain: &VKSwapchain,
         image_index: u32,
@@ -385,8 +394,11 @@ impl SwapPresent {
                 .swapchain_loader
                 .queue_present(vk_device.graphics_queue, &present_info)?;
         }
-        self.frame = self.frame + 1 % self.max_frames;
         Ok(())
+    }
+
+    pub fn increment_frame(&mut self) {
+        self.frame = self.frame + 1 % self.max_frames;
     }
 
     /// Gets the relevent image available semaphore
