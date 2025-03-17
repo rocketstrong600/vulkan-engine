@@ -83,7 +83,6 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext<'a> {
-    pub vulkan_cmd_buff: vk::CommandBuffer,
     pub vulkan_cmd_pool: vk::CommandPool, // TODO: probably move out of here to something that magages the actual rendering algo
 
     pub vertex_shader: VKShader<'a>,
@@ -116,15 +115,6 @@ impl VKContext<'_> {
                 .create_command_pool(&cmd_pool_info, None)?
         };
 
-        // allocate 1 primary command buffer
-        let alloc_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(vulkan_cmd_pool)
-            .command_buffer_count(1)
-            .level(vk::CommandBufferLevel::PRIMARY);
-
-        let vulkan_cmd_buff =
-            unsafe { vulkan_device.device.allocate_command_buffers(&alloc_info)?[0] };
-
         let vertex_shader = VKShader::new(
             &vulkan_device,
             "shaders/triangle.spv",
@@ -150,7 +140,6 @@ impl VKContext<'_> {
             vertex_shader,
             fragment_shader,
             vulkan_cmd_pool,
-            vulkan_cmd_buff,
         })
     }
 }

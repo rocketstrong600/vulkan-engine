@@ -173,7 +173,7 @@ impl VKSwapchain {
             .image_color_space(ideal_surface_format.color_space)
             .image_extent(capibilities.get_extent(800, 600))
             .image_array_layers(1) // always 1 for non sterioscopic displays
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT) // opperations to be used on image can also be transfer
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST) // opperations to be used on image can also be transfer
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE) // single queue can access image
             .pre_transform(capibilities.surface_capibilities.current_transform) // Don't Rotate Image
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE) // Alpha Blending with other windows = Opaque
@@ -267,6 +267,7 @@ pub struct VKPresent {
 }
 
 pub struct ToRenderInfo {
+    pub frame_in_flight: u32,
     pub img_aquired_gpu: vk::Semaphore,
     pub img_aquired_index: u32,
     pub done_rendering_cpu: vk::Fence,
@@ -335,6 +336,9 @@ impl VKPresent {
                 )?
         };
 
+        // Store the aquired image index for presentation
+        self.img_aquired_index = img_index;
+
         // Waits on Swapchain img in use, usually only occurs if the swapchain hands us a img out of order
         if let Some(img_in_flight) = self.img_in_flight.get(img_index as usize) {
             if !img_in_flight.is_null() {
@@ -366,6 +370,7 @@ impl VKPresent {
         };
 
         Ok(ToRenderInfo {
+            frame_in_flight: self.frame,
             img_aquired_gpu,
             img_aquired_index: img_index,
             done_rendering_cpu: img_rendered_cpu,
