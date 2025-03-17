@@ -6,6 +6,7 @@ use crate::utils::ReplaceWith;
 use ash::vk;
 use log::info;
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -27,7 +28,9 @@ impl AppCTX<'_> {
     fn new(game_info: GameInfo, event_loop: &ActiveEventLoop) -> Self {
         let window = event_loop
             .create_window(
-                Window::default_attributes().with_title(game_info.app_name.to_string_lossy()),
+                Window::default_attributes()
+                    .with_title(game_info.app_name.to_string_lossy())
+                    .with_inner_size(PhysicalSize::new(800, 600)),
             )
             .unwrap();
 
@@ -175,7 +178,9 @@ fn render(app_ctx: &mut AppCTX) {
             .unwrap()
     };
 
+    // required for wayland
     app_ctx.window.pre_present_notify();
+
     vk_present.present_frame(vk_ctx).unwrap();
 }
 
@@ -191,26 +196,33 @@ unsafe fn record_cmd_buffer(
         .level_count(1)
         .layer_count(1);
 
+    // memory barriar info for clear
+    // we use memory barriars to transistion the image into the correct layout
+    // this is for transitioning the layout to the required layout for screen clear cmd
     let image_memory_barriers = [vk::ImageMemoryBarrier2::default()
         .old_layout(vk::ImageLayout::UNDEFINED)
         .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .image(image)
         .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
         .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
         .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE_KHR)
+        .image(image)
         .subresource_range(sub_resource_range)];
 
+    // memory barriar info for present
+    // we use memory barriars to transistion the image into the correct layout
+    // this is for the final layout before presenting
     let present_image_memory_barriers = [vk::ImageMemoryBarrier2::default()
         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
         .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-        .image(image)
         .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
         .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
         .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE_KHR)
+        .image(image)
         .subresource_range(sub_resource_range)];
 
+    // nice pinky colour
     let mut clear_color_value = vk::ClearColorValue::default();
-    clear_color_value.float32 = [1.0, 0.0, 0.0, 1.0];
+    clear_color_value.float32 = [0.74757, 0.02016, 0.253, 1.0];
 
     let dependency_info =
         vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);

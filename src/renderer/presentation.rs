@@ -3,6 +3,7 @@ use ash::{
     khr::{surface, swapchain},
     vk::{self, Handle},
 };
+use log::warn;
 use std::error;
 use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
@@ -324,7 +325,7 @@ impl VKPresent {
 
         // request img from swapchain
         // _ is type bool for suboptimal or invalid swapchain
-        let (img_index, _) = unsafe {
+        let (img_index, img_suboptimal) = unsafe {
             vk_ctx
                 .vulkan_swapchain
                 .swapchain_loader
@@ -335,6 +336,10 @@ impl VKPresent {
                     vk::Fence::null(),
                 )?
         };
+
+        if img_suboptimal {
+            warn!("Swapchain Suboptimal");
+        }
 
         // Store the aquired image index for presentation
         self.img_aquired_index = img_index;
