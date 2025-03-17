@@ -6,7 +6,7 @@ use crate::renderer::device::VKDevice;
 use crate::utils::GameInfo;
 use ash::vk::ShaderStageFlags;
 use ash::{vk, Entry, Instance};
-use presentation::{SwapPresent, VKSurface, VKSwapchain};
+use presentation::{VKSurface, VKSwapchain};
 use shader::{VKShader, VKShaderLoader};
 use std::error;
 use std::ffi::c_char;
@@ -83,8 +83,6 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext<'a> {
-    pub swap_present: SwapPresent,
-
     pub vulkan_cmd_buff: vk::CommandBuffer,
     pub vulkan_cmd_pool: vk::CommandPool, // TODO: probably move out of here to something that magages the actual rendering algo
 
@@ -127,8 +125,6 @@ impl VKContext<'_> {
         let vulkan_cmd_buff =
             unsafe { vulkan_device.device.allocate_command_buffers(&alloc_info)?[0] };
 
-        let swap_present = unsafe { SwapPresent::default().max_frames(2, &vulkan_device)? };
-
         let vertex_shader = VKShader::new(
             &vulkan_device,
             "shaders/triangle.spv",
@@ -153,7 +149,6 @@ impl VKContext<'_> {
             vulkan_shader_loader,
             vertex_shader,
             fragment_shader,
-            swap_present,
             vulkan_cmd_pool,
             vulkan_cmd_buff,
         })
@@ -163,7 +158,10 @@ impl VKContext<'_> {
 impl Drop for VKContext<'_> {
     fn drop(&mut self) {
         unsafe {
-            self.swap_present.destroy(&self.vulkan_device);
+            self.vulkan_device
+                .device
+                .device_wait_idle()
+                .unwrap_unchecked();
 
             self.vulkan_device
                 .device

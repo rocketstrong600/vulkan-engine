@@ -1,7 +1,7 @@
 use crate::renderer::VKInstance;
 use ash::{
     khr::{surface, swapchain},
-    vk::{self, FenceCreateFlags, Handle, SemaphoreCreateFlags},
+    vk::{self, Handle},
 };
 use std::error;
 use winit::{
@@ -9,7 +9,7 @@ use winit::{
     window::Window,
 };
 
-use super::device::VKDevice;
+use crate::renderer::{device::VKDevice, VKContext};
 
 pub struct VKSurface {
     pub surface: vk::SurfaceKHR,
@@ -148,7 +148,6 @@ pub struct VKSwapchain {
     pub swapchain: vk::SwapchainKHR,
     pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
-    pub img_in_flight: Vec<vk::Fence>,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
 }
@@ -190,17 +189,10 @@ impl VKSwapchain {
         let image_views =
             Self::create_image_views(&images, ideal_surface_format.format, vk_device)?;
 
-        let mut img_fences = Vec::new();
-
-        images
-            .iter()
-            .for_each(|_| img_fences.push(vk::Fence::null()));
-
         Ok(Self {
             swapchain,
             image_views,
             images,
-            img_in_flight: img_fences,
             swapchain_loader,
             capibilities,
         })
@@ -246,18 +238,11 @@ impl VKSwapchain {
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
-        self.img_in_flight.iter().for_each(|ifence| {
-            if !ifence.is_null() {
-                vk_device.device.destroy_fence(*ifence, None)
-            }
-        });
         self.image_views
             .iter()
             .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
         self.swapchain_loader
             .destroy_swapchain(self.swapchain, None);
-
-        self.img_in_flight.clear();
     }
 
     pub fn rebuild_swapchain(self) {}
@@ -266,24 +251,29 @@ impl VKSwapchain {
 /// Manages Syncronisation objects and part of algo for presenting to screen
 /// when rendering a frame
 /// use in this order:
-/// wait_rendered
 /// aquire_img
-/// wait_img_in_flight
-/// link_img_in_flight
-/// Submit Your Command Buffers with img_rendered semaphore and reset img_rendered fence
+/// submit_cmd_buf Submit Your Command Buffers with img_rendered semaphore and reset img_rendered fence
 /// Present Frame
-/// increment_frame
 // TODO: investigate timeline semaphores for sync arround the swapchain such as render completion
 #[derive(Default)]
-pub struct SwapPresent {
-    frame: u32,                            // current frame in flight
-    max_frames: u32,                       // max Frames gpu can work on
-    img_available_gpu: Vec<vk::Semaphore>, // Image Aquired Semaphore
-    img_rendered_gpu: Vec<vk::Semaphore>,  // render Finished Semaphore
-    img_rendered_cpu: Vec<vk::Fence>,      // render Finshed CPU Fence
+pub struct VKPresent {
+    frame: u32,                           // current frame in flight
+    max_frames: u32,                      // max Frames gpu can work on
+    img_aquired_gpu: Vec<vk::Semaphore>,  // Image Aquired Semaphore
+    img_rendered_gpu: Vec<vk::Semaphore>, // render Finished Semaphore
+    img_rendered_cpu: Vec<vk::Fence>,     // render Finshed CPU Fence
+    img_aquired_index: u32,
+    img_in_flight: Vec<vk::Fence>,
 }
 
-impl SwapPresent {
+pub struct ToRenderInfo {
+    pub img_aquired_gpu: vk::Semaphore,
+    pub img_aquired_index: u32,
+    pub done_rendering_cpu: vk::Fence,
+    pub done_rendering_gpu: vk::Semaphore,
+}
+
+impl VKPresent {
     pub fn get_max_frames(self) -> u32 {
         self.max_frames
     }
@@ -297,92 +287,103 @@ impl SwapPresent {
     pub unsafe fn max_frames(
         mut self,
         frames: u32,
-        vk_device: &VKDevice,
+        vk_ctx: &VKContext,
     ) -> Result<Self, vk::Result> {
         self.max_frames = frames;
-        self.frame = self.frame % self.max_frames;
-        Ok(self.recreate_sync(vk_device)?)
-    }
-
-    /// wait on img_rendered_cpu fence
-    pub fn wait_rendered(&self, vk_device: &VKDevice) -> Result<(), vk::Result> {
-        unsafe {
-            vk_device.device.wait_for_fences(
-                &[*self.get_img_rendered().ok_or(vk::Result::INCOMPLETE)?.1],
-                true,
-                u64::MAX,
-            )
-        }
+        self.frame %= self.max_frames;
+        self.recreate_sync(vk_ctx)
     }
 
     /// returns aquired image and semaphore
     /// for when image is ready
     // TODO: Handle subobtimal or invalidaed swapchain
-    pub fn aquire_img(&self, swapchain: &VKSwapchain) -> Result<u32, vk::Result> {
-        unsafe {
-            // _ is bool for suboptimal or invalid swapchain
-            let (index, _) = swapchain.swapchain_loader.acquire_next_image(
-                swapchain.swapchain,
-                u64::MAX,
-                *self.get_img_available().ok_or(vk::Result::INCOMPLETE)?,
-                vk::Fence::null(),
-            )?;
-            Ok(index)
-        }
-    }
-
-    /// This is for waiting on the specific swapchain img in flight.
-    /// use after aquire image.
-    /// this prevents situations where the swapchain give us a particular image that is being worked on.
-    // it's hard to avoid this check because we don't know what image we are going to get from the
-    // swapchain.
-    pub fn wait_img_in_flight(
-        &self,
-        vk_device: &VKDevice,
-        swapchain: &VKSwapchain,
-        image_index: u32,
-    ) -> Result<(), vk::Result> {
-        let in_flight_img = swapchain
-            .img_in_flight
-            .get(image_index as usize)
+    pub fn aquire_img(&mut self, vk_ctx: &VKContext) -> Result<ToRenderInfo, vk::Result> {
+        let img_rendered_cpu = *self
+            .img_rendered_cpu
+            .get(self.frame as usize)
             .ok_or(vk::Result::INCOMPLETE)?;
 
-        if !in_flight_img.is_null() {
-            unsafe {
-                vk_device
-                    .device
-                    .wait_for_fences(&[*in_flight_img], true, u64::MAX)?
+        let img_rendered_gpu = *self
+            .img_rendered_gpu
+            .get(self.frame as usize)
+            .ok_or(vk::Result::INCOMPLETE)?;
+
+        let img_aquired_gpu = *self
+            .img_aquired_gpu
+            .get(self.frame as usize)
+            .ok_or(vk::Result::INCOMPLETE)?;
+
+        // wait on cpu for currently rendering frame to finish
+        unsafe {
+            vk_ctx
+                .vulkan_device
+                .device
+                .wait_for_fences(&[img_rendered_cpu], true, u64::MAX)?;
+        }
+
+        // request img from swapchain
+        // _ is type bool for suboptimal or invalid swapchain
+        let (img_index, _) = unsafe {
+            vk_ctx
+                .vulkan_swapchain
+                .swapchain_loader
+                .acquire_next_image(
+                    vk_ctx.vulkan_swapchain.swapchain,
+                    u64::MAX,
+                    img_aquired_gpu,
+                    vk::Fence::null(),
+                )?
+        };
+
+        // Waits on Swapchain img in use, usually only occurs if the swapchain hands us a img out of order
+        if let Some(img_in_flight) = self.img_in_flight.get(img_index as usize) {
+            if !img_in_flight.is_null() {
+                unsafe {
+                    vk_ctx.vulkan_device.device.wait_for_fences(
+                        &[*img_in_flight],
+                        true,
+                        u64::MAX,
+                    )?;
+                }
             }
         }
-        Ok(())
-    }
 
-    /// links fence for the image in the swapchain with our current in flight frame
-    pub fn link_img_in_flight(
-        &self,
-        swapchain: &mut VKSwapchain,
-        image_index: u32,
-    ) -> Result<(), vk::Result> {
-        let in_flight_img = self.get_img_rendered().ok_or(vk::Result::INCOMPLETE)?.1;
-        swapchain
-            .img_in_flight
-            .insert(image_index as usize, *in_flight_img);
-        Ok(())
+        // grow img_in_flight to value at img_index
+        if (img_index as usize) >= self.img_in_flight.len() {
+            self.img_in_flight
+                .resize((img_index as usize) + 1, vk::Fence::null());
+        }
+
+        // associates our in flight fence with an image on the swapchain
+        self.img_in_flight[img_index as usize] = img_rendered_cpu;
+
+        // make sure fence is not signaled before command buffer would be submitted
+        unsafe {
+            vk_ctx
+                .vulkan_device
+                .device
+                .reset_fences(&[img_rendered_cpu])?
+        };
+
+        Ok(ToRenderInfo {
+            img_aquired_gpu,
+            img_aquired_index: img_index,
+            done_rendering_cpu: img_rendered_cpu,
+            done_rendering_gpu: img_rendered_gpu,
+        })
     }
 
     /// waits on rendered semaphore
     /// and then submits frame
     /// image_index is index of image obtained from aquire_image
     // TODO: Handle subobtimal or invalidaed swapchain
-    pub fn present_frame(
-        &self,
-        vk_device: &VKDevice,
-        swapchain: &VKSwapchain,
-        image_index: u32,
-    ) -> Result<(), vk::Result> {
-        let swapchains = &[swapchain.swapchain];
-        let semaphores = &[*self.get_img_rendered().ok_or(vk::Result::INCOMPLETE)?.0];
-        let image_indices = &[image_index];
+    pub fn present_frame(&mut self, vk_ctx: &VKContext) -> Result<(), vk::Result> {
+        let swapchains = &[vk_ctx.vulkan_swapchain.swapchain];
+        let semaphores = &[*self
+            .img_rendered_gpu
+            .get(self.frame as usize)
+            .ok_or(vk::Result::INCOMPLETE)?];
+        let image_indices = &[self.img_aquired_index];
 
         let present_info = vk::PresentInfoKHR::default()
             .swapchains(swapchains)
@@ -390,43 +391,26 @@ impl SwapPresent {
             .image_indices(image_indices);
 
         unsafe {
-            swapchain
+            vk_ctx
+                .vulkan_swapchain
                 .swapchain_loader
-                .queue_present(vk_device.graphics_queue, &present_info)?;
+                .queue_present(vk_ctx.vulkan_device.graphics_queue, &present_info)?;
         }
+        self.frame = (self.frame + 1) % self.max_frames;
         Ok(())
     }
 
-    pub fn increment_frame(&mut self) {
-        self.frame = self.frame + 1 % self.max_frames;
-    }
-
-    /// Gets the relevent image available semaphore
-    /// this is signaled after aquire image is done
-    pub fn get_img_available(&self) -> Option<&vk::Semaphore> {
-        self.img_available_gpu.get(self.frame as usize)
-    }
-
-    /// Gets the relevent image rendered semaphore and fence
-    /// Signal this when rendering is done
-    /// so that submit frame can complete
-    pub fn get_img_rendered(&self) -> Option<(&vk::Semaphore, &vk::Fence)> {
-        Some((
-            self.img_rendered_gpu.get(self.frame as usize)?,
-            self.img_rendered_cpu.get(self.frame as usize)?,
-        ))
-    }
-
     // Recreates Sync Objects Such as Semaphores and Fences
-    unsafe fn recreate_sync(mut self, vk_device: &VKDevice) -> Result<Self, vk::Result> {
-        self.destroy(vk_device);
+    unsafe fn recreate_sync(mut self, vk_ctx: &VKContext) -> Result<Self, vk::Result> {
+        let vk_device = &vk_ctx.vulkan_device;
+        self.destroy(vk_ctx);
 
         for _ in 0..self.max_frames {
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
             let img_semaphore = vk_device
                 .device
                 .create_semaphore(&semaphore_create_info, None)?;
-            self.img_available_gpu.push(img_semaphore);
+            self.img_aquired_gpu.push(img_semaphore);
 
             let renderd_semaphore = vk_device
                 .device
@@ -434,7 +418,7 @@ impl SwapPresent {
             self.img_rendered_gpu.push(renderd_semaphore);
 
             let fence_create_info =
-                vk::FenceCreateInfo::default().flags(FenceCreateFlags::SIGNALED);
+                vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
             let renderd_fence = vk_device.device.create_fence(&fence_create_info, None)?;
             self.img_rendered_cpu.push(renderd_fence);
         }
@@ -447,9 +431,10 @@ impl SwapPresent {
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
     /// Don't use any destroyed Sync Handles
-    pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
+    pub unsafe fn destroy(&mut self, vk_ctx: &VKContext) {
+        let vk_device = &vk_ctx.vulkan_device;
         vk_device.device.device_wait_idle().unwrap_unchecked();
-        self.img_available_gpu.iter().for_each(|semaphore| {
+        self.img_aquired_gpu.iter().for_each(|semaphore| {
             if !semaphore.is_null() {
                 vk_device.device.destroy_semaphore(*semaphore, None);
             }
@@ -467,8 +452,9 @@ impl SwapPresent {
             }
         });
 
-        self.img_available_gpu.clear();
+        self.img_aquired_gpu.clear();
         self.img_rendered_gpu.clear();
         self.img_rendered_cpu.clear();
+        self.img_in_flight.clear();
     }
 }

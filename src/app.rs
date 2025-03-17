@@ -1,3 +1,4 @@
+use crate::renderer::presentation::VKPresent;
 use crate::renderer::VKContext;
 use crate::utils::GameInfo;
 use crate::utils::ReplaceWith;
@@ -16,6 +17,7 @@ pub struct AppCTX<'a> {
     pub game_info: GameInfo,
     pub window: Window,
     pub vulkan_ctx: VKContext<'a>,
+    pub vulkan_present: VKPresent,
 }
 
 impl AppCTX<'_> {
@@ -27,12 +29,20 @@ impl AppCTX<'_> {
             .unwrap();
 
         let vulkan_ctx = VKContext::new(&game_info, &window).unwrap();
+        let vulkan_present = unsafe { VKPresent::default().max_frames(2, &vulkan_ctx).unwrap() };
 
         Self {
             game_info,
             window,
             vulkan_ctx,
+            vulkan_present,
         }
+    }
+}
+
+impl Drop for AppCTX<'_> {
+    fn drop(&mut self) {
+        unsafe { self.vulkan_present.destroy(&self.vulkan_ctx) };
     }
 }
 
@@ -60,6 +70,7 @@ impl ApplicationHandler for App<'_> {
             }
             WindowEvent::RedrawRequested => {
                 if let App::Initialised(app_ctx) = self {
+                    render(app_ctx);
                     app_ctx.window.request_redraw();
                 }
             }
@@ -95,4 +106,17 @@ impl App<'_> {
         event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app_on_demand(self)
     }
+}
+
+fn render(app_ctx: &mut AppCTX) {
+    let vk_ctx = &app_ctx.vulkan_ctx;
+    let vk_present = &mut app_ctx.vulkan_present;
+    let render_info = vk_present.aquire_img(vk_ctx).unwrap();
+
+    // Here we would submit command buffers and render frame to the aquired img_index
+    // the img index relates to the corrosponding image on the swapchain
+    // the cmdbuffer submit should have the rendered fence and rendered semaphore
+    //
+
+    vk_present.present_frame(vk_ctx).unwrap();
 }
