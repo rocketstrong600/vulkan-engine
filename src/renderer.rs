@@ -6,7 +6,7 @@ use crate::renderer::device::VKDevice;
 use crate::utils::GameInfo;
 use ash::vk::ShaderStageFlags;
 use ash::{vk, Entry, Instance};
-use presentation::{VKSurface, VKSwapchain};
+use presentation::{SwapPresent, VKSurface, VKSwapchain};
 use shader::{VKShader, VKShaderLoader};
 use std::error;
 use std::ffi::c_char;
@@ -83,14 +83,19 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext<'a> {
-    pub vulkan_cmd_pool: vk::CommandPool,
+    pub swap_present: SwapPresent,
+
+    pub vulkan_cmd_buff: vk::CommandBuffer,
+    pub vulkan_cmd_pool: vk::CommandPool, // TODO: probably move out of here to something that magages the actual rendering algo
+
+    pub vertex_shader: VKShader<'a>,
+    pub fragment_shader: VKShader<'a>,
+
     pub vulkan_shader_loader: VKShaderLoader<&'static str>,
     pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
     pub vulkan_device: VKDevice,
     pub vulkan_instance: VKInstance,
-    pub vertex_shader: VKShader<'a>,
-    pub fragment_shader: VKShader<'a>,
 }
 
 impl VKContext<'_> {
@@ -101,13 +106,28 @@ impl VKContext<'_> {
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
         let vulkan_swapchain = VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface)?;
         let mut vulkan_shader_loader = VKShaderLoader::default();
+
         let cmd_pool_info = vk::CommandPoolCreateInfo::default()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(vulkan_device.queue_index);
+
+        // Create Command Pool
         let vulkan_cmd_pool = unsafe {
             vulkan_device
                 .device
                 .create_command_pool(&cmd_pool_info, None)?
         };
+
+        // allocate 1 primary command buffer
+        let alloc_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(vulkan_cmd_pool)
+            .command_buffer_count(1)
+            .level(vk::CommandBufferLevel::PRIMARY);
+
+        let vulkan_cmd_buff =
+            unsafe { vulkan_device.device.allocate_command_buffers(&alloc_info)?[0] };
+
+        let swap_present = unsafe { SwapPresent::default().max_frames(2, &vulkan_device)? };
 
         let vertex_shader = VKShader::new(
             &vulkan_device,
@@ -126,7 +146,6 @@ impl VKContext<'_> {
         )?;
 
         Ok(Self {
-            vulkan_cmd_pool,
             vulkan_instance,
             vulkan_device,
             vulkan_surface,
@@ -134,6 +153,9 @@ impl VKContext<'_> {
             vulkan_shader_loader,
             vertex_shader,
             fragment_shader,
+            swap_present,
+            vulkan_cmd_pool,
+            vulkan_cmd_buff,
         })
     }
 }
@@ -141,8 +163,15 @@ impl VKContext<'_> {
 impl Drop for VKContext<'_> {
     fn drop(&mut self) {
         unsafe {
+            self.swap_present.destroy(&self.vulkan_device);
+
+            self.vulkan_device
+                .device
+                .destroy_command_pool(self.vulkan_cmd_pool, None);
+
             self.fragment_shader.destroy(&self.vulkan_device);
             self.vertex_shader.destroy(&self.vulkan_device);
+
             self.vulkan_swapchain.destroy(&self.vulkan_device);
             self.vulkan_surface.destroy();
             self.vulkan_device.destroy();

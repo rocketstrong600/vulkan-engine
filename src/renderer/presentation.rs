@@ -270,7 +270,7 @@ impl VKSwapchain {
 /// aquire_img
 /// wait_img_in_flight
 /// link_img_in_flight
-/// Submit Your Command Buffers with img_rendered_semaphore and reset img_rendered fence
+/// Submit Your Command Buffers with img_rendered semaphore and reset img_rendered fence
 /// Present Frame
 /// increment_frame
 // TODO: investigate timeline semaphores for sync arround the swapchain such as render completion

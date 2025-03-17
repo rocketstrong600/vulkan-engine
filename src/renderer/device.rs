@@ -9,6 +9,7 @@ use crate::renderer::VKInstance;
 pub struct VKDevice {
     pub p_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
+    pub queue_index: u32,
     pub device: Device,
 }
 
@@ -139,6 +140,7 @@ impl VKDevice {
             p_device,
             device,
             graphics_queue,
+            queue_index: ideal_graphics_queue,
         })
     }
 
