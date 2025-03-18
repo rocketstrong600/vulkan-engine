@@ -6,7 +6,6 @@ use crate::utils::ReplaceWith;
 use ash::vk;
 use log::info;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -28,9 +27,7 @@ impl AppCTX<'_> {
     fn new(game_info: GameInfo, event_loop: &ActiveEventLoop) -> Self {
         let window = event_loop
             .create_window(
-                Window::default_attributes()
-                    .with_title(game_info.app_name.to_string_lossy())
-                    .with_inner_size(PhysicalSize::new(800, 600)),
+                Window::default_attributes().with_title(game_info.app_name.to_string_lossy()),
             )
             .unwrap();
 
@@ -94,6 +91,12 @@ impl ApplicationHandler for App<'_> {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
+            }
+            WindowEvent::Resized(size) => {
+                if let App::Initialised(app_ctx) = self {
+
+                    // Window Resized
+                }
             }
             WindowEvent::RedrawRequested => {
                 if let App::Initialised(app_ctx) = self {
@@ -204,7 +207,7 @@ unsafe fn record_cmd_buffer(
         .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
         .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
         .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE_KHR)
+        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
         .image(image)
         .subresource_range(sub_resource_range)];
 

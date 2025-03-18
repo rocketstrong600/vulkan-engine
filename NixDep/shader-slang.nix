@@ -6,20 +6,28 @@
   ninja,
   python3,
   miniz,
+  lz4,
   libxml2,
   libX11,
-  # spirv-headers,
-  # glslang,
+  glslang,
+  llvmPackages_13,
   versionCheckHook,
   gitUpdater,
 
   # Required for compiling to SPIR-V or GLSL
   withGlslang ? true,
+  # Can be used for compiling shaders to CPU targets, see:
+  # https://github.com/shader-slang/slang/blob/master/docs/cpu-target.md
+  # If `withLLVM` is disabled, Slang will fall back to the C++ compiler found
+  # in the environment, if one exists.
+  withLLVM ? false,
+  # Dynamically link against libllvm and libclang++ (upstream defaults to static)
+  withSharedLLVM ? withLLVM,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "shader-slang";
-  version = "2025.6.1";
+  version = "2025.6.2";
 
   src = fetchFromGitHub {
     owner = "shader-slang";
@@ -29,9 +37,24 @@ stdenv.mkDerivation (finalAttrs: {
     fetchSubmodules = true;
   };
 
-  patches = [
-    #./1-find-packages.patch
-  ];
+  patches =
+    [
+      # Slang's build definitions do not support using system provided cmake packages
+      # for its dependencies.
+      # While it does come with "SLANG_USE_SYSTEM_XYZ" flags, these expect Slang to be
+      # imported into some other CMake build that already provides the necessary target.
+      # This patch adds the required `find_package` calls and sets up target aliases where needed.
+      ./1-find-packages.patch
+    ]
+    ++ lib.optionals withSharedLLVM [
+      # Upstream statically links libllvm and libclang++, resulting in a ~5x increase in binary size.
+      ./2-shared-llvm.patch
+    ]
+    ++ lib.optionals withGlslang [
+      # Upstream depends on glslang 13 and there are minor breaking changes in glslang 15, the version
+      # we ship in nixpkgs.
+      ./3-glslang-15.patch
+    ];
 
   outputs = [
     "out"
@@ -50,15 +73,22 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs =
     [
       miniz
+      lz4
       libxml2
     ]
-    ++ (lib.optionals stdenv.hostPlatform.isLinux [
+    ++ lib.optionals stdenv.hostPlatform.isLinux [
       libX11
-    ])
-    ++ (lib.optionals withGlslang [
+    ]
+    ++ lib.optionals withLLVM [
+      # Slang only supports LLVM 13:
+      # https://github.com/shader-slang/slang/blob/master/docs/building.md#llvm-support
+      llvmPackages_13.llvm
+      llvmPackages_13.libclang
+    ]
+    ++ lib.optionals withGlslang [
       # SPIRV-tools is included in glslang.
-      # glslang
-    ]);
+      glslang
+    ];
 
   separateDebugInfo = true;
 
@@ -91,8 +121,15 @@ stdenv.mkDerivation (finalAttrs: {
       # https://github.com/shader-slang/slang-rhi is "under active refactoring
       # and development, and is not yet ready for general use."
       "-DSLANG_ENABLE_SLANG_RHI=OFF"
-      "-DSLANG_SLANG_LLVM_FLAVOR=DISABLE"
-    ];
+      "-DSLANG_USE_SYSTEM_MINIZ=ON"
+      "-DSLANG_USE_SYSTEM_LZ4=ON"
+      "-DSLANG_SLANG_LLVM_FLAVOR=${if withLLVM then "USE_SYSTEM_LLVM" else "DISABLE"}"
+    ]
+    ++ lib.optionals withGlslang [
+      "-DSLANG_USE_SYSTEM_SPIRV_TOOLS=ON"
+      "-DSLANG_USE_SYSTEM_GLSLANG=ON"
+    ]
+    ++ lib.optional (!withGlslang) "-DSLANG_ENABLE_SLANG_GLSLANG=OFF";
 
   nativeInstallCheckInputs = [ versionCheckHook ];
   versionCheckProgram = "${placeholder "out"}/bin/slangc";
