@@ -30,7 +30,7 @@ impl AppCTX<'_> {
             )
             .unwrap();
 
-        let vulkan_ctx = VKContext::new(&game_info, &window, width, height).unwrap();
+        let vulkan_ctx = VKContext::new(&game_info, &window).unwrap();
 
         let vulkan_renderer = VKRenderer::new(vulkan_ctx, 2).unwrap();
 

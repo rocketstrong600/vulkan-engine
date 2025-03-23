@@ -129,7 +129,7 @@ impl VKSwapchainCapabilities {
         image_count
     }
 
-    pub fn get_extent(&self, init_width: u32, init_height: u32) -> vk::Extent2D {
+    pub fn get_extent(&self, window: &Window) -> vk::Extent2D {
         // window manager can indicate that Size of window will be determined by swapchain
         // return current exent?
         if self.surface_capibilities.current_extent.width != u32::MAX {
@@ -138,8 +138,18 @@ impl VKSwapchainCapabilities {
             let max_extent = self.surface_capibilities.max_image_extent;
             let min_extent = self.surface_capibilities.min_image_extent;
             vk::Extent2D::default()
-                .width(init_width.clamp(min_extent.width, min_extent.height))
-                .height(init_height.clamp(min_extent.height, max_extent.height))
+                .width(
+                    window
+                        .inner_size()
+                        .width
+                        .clamp(min_extent.width, max_extent.width),
+                )
+                .height(
+                    window
+                        .inner_size()
+                        .height
+                        .clamp(min_extent.height, max_extent.height),
+                )
         }
     }
 }
@@ -159,8 +169,7 @@ impl VKSwapchain {
         vk_instance: &VKInstance,
         vk_device: &VKDevice,
         vk_surface: &VKSurface,
-        width: u32,
-        height: u32,
+        window: &Window,
     ) -> Result<Self, vk::Result> {
         let physical_device = vk_device.p_device;
         let instance = &vk_instance.instance;
@@ -170,7 +179,7 @@ impl VKSwapchain {
 
         let ideal_surface_format = capibilities.ideal_surface_format();
 
-        let image_extent = capibilities.get_extent(width, height);
+        let image_extent = capibilities.get_extent(window);
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(vk_surface.surface)

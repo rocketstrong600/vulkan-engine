@@ -100,23 +100,13 @@ pub struct VKContext {
 }
 
 impl VKContext {
-    pub fn new(
-        game_info: &GameInfo,
-        window: &Window,
-        width: u32,
-        height: u32,
-    ) -> Result<Self, Box<dyn error::Error>> {
+    pub fn new(game_info: &GameInfo, window: &Window) -> Result<Self, Box<dyn error::Error>> {
         let vk_instance_ext = display_vk_ext(window)?;
         let vulkan_instance = VKInstance::new(game_info, Some(vk_instance_ext))?;
         let vulkan_surface = VKSurface::new(&vulkan_instance, window)?;
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
-        let vulkan_swapchain = VKSwapchain::new(
-            &vulkan_instance,
-            &vulkan_device,
-            &vulkan_surface,
-            width,
-            height,
-        )?;
+        let vulkan_swapchain =
+            VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface, &window)?;
 
         let alloc_desc = vulkan::AllocatorCreateDesc {
             instance: vulkan_instance.instance.clone(),
