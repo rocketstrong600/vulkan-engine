@@ -149,6 +149,7 @@ pub struct VKSwapchain {
     pub swapchain: vk::SwapchainKHR,
     pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
+    pub image_extent: vk::Extent2D,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
 }
@@ -158,6 +159,8 @@ impl VKSwapchain {
         vk_instance: &VKInstance,
         vk_device: &VKDevice,
         vk_surface: &VKSurface,
+        width: u32,
+        height: u32,
     ) -> Result<Self, vk::Result> {
         let physical_device = vk_device.p_device;
         let instance = &vk_instance.instance;
@@ -167,12 +170,14 @@ impl VKSwapchain {
 
         let ideal_surface_format = capibilities.ideal_surface_format();
 
+        let image_extent = capibilities.get_extent(width, height);
+
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(vk_surface.surface)
             .min_image_count(capibilities.ideal_n_images())
             .image_format(ideal_surface_format.format)
             .image_color_space(ideal_surface_format.color_space)
-            .image_extent(capibilities.get_extent(800, 600))
+            .image_extent(image_extent)
             .image_array_layers(1) // always 1 for non sterioscopic displays
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST) // opperations to be used on image can also be transfer
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE) // single queue can access image
@@ -194,6 +199,7 @@ impl VKSwapchain {
             swapchain,
             image_views,
             images,
+            image_extent,
             swapchain_loader,
             capibilities,
         })

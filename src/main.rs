@@ -1,7 +1,6 @@
-
-use vulkan_engine::utils::GameInfo;
-use vulkan_engine::app::App;
 use simple_logger::SimpleLogger;
+use vulkan_engine::app::App;
+use vulkan_engine::utils::GameInfo;
 use winit::event_loop::EventLoop;
 
 fn main() {
@@ -29,7 +28,6 @@ fn main() {
     };
 
     let mut app = App::new(game_info);
-
 
     if let Err(error) = app.start(&mut event_loop) {
         panic!("Failed on EventLoop: {error:?}");

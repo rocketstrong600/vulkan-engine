@@ -21,13 +21,16 @@ pub struct AppCTX<'a> {
 
 impl AppCTX<'_> {
     fn new(game_info: GameInfo, event_loop: &ActiveEventLoop) -> Self {
+        let (width, height) = (800, 600);
         let window = event_loop
             .create_window(
-                Window::default_attributes().with_title(game_info.app_name.to_string_lossy()),
+                Window::default_attributes()
+                    .with_title(game_info.app_name.to_string_lossy())
+                    .with_inner_size(winit::dpi::PhysicalSize::new(width, height)),
             )
             .unwrap();
 
-        let vulkan_ctx = VKContext::new(&game_info, &window).unwrap();
+        let vulkan_ctx = VKContext::new(&game_info, &window, width, height).unwrap();
 
         let vulkan_renderer = VKRenderer::new(vulkan_ctx, 2).unwrap();
 
