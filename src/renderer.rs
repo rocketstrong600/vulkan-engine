@@ -5,14 +5,20 @@ pub mod shader;
 use crate::renderer::device::VKDevice;
 use crate::renderer::presentation::VKPresent;
 use crate::utils::GameInfo;
-use ash::vk::ShaderStageFlags;
+use ash::vk::{CommandBufferUsageFlags, PolygonMode, ShaderStageFlags};
 use ash::{vk, Entry, Instance};
+use gpu_allocator::vulkan;
+use gpu_allocator::MemoryLocation;
+use presser;
+
 use presentation::{VKSurface, VKSwapchain};
 use shader::{VKShader, VKShaderLoader};
 use std::error;
 use std::ffi::c_char;
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
+
+use glam::{Vec2, Vec3};
 
 pub const ENGINE_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
@@ -84,6 +90,7 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext {
+    pub mem_allocator: vulkan::Allocator,
     pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
     pub vulkan_device: VKDevice,
@@ -98,7 +105,19 @@ impl VKContext {
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
         let vulkan_swapchain = VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface)?;
 
+        let alloc_desc = vulkan::AllocatorCreateDesc {
+            instance: vulkan_instance.instance.clone(),
+            device: vulkan_device.device.clone(),
+            physical_device: vulkan_device.p_device,
+            debug_settings: Default::default(),
+            buffer_device_address: true,
+            allocation_sizes: Default::default(),
+        };
+
+        let mem_allocator = vulkan::Allocator::new(&alloc_desc)?;
+
         Ok(Self {
+            mem_allocator,
             vulkan_instance,
             vulkan_device,
             vulkan_surface,
@@ -106,6 +125,9 @@ impl VKContext {
         })
     }
 
+    /// # Safety
+    /// Vulkan CTX should be destroyed after all of your vk objects
+    /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self) {
         self.vulkan_swapchain.destroy(&self.vulkan_device);
         self.vulkan_surface.destroy();
@@ -131,11 +153,17 @@ pub struct VKRenderer<'a> {
     pub vulkan_cmd_buffs: Vec<vk::CommandBuffer>,
     pub vertex_shader: VKShader<'a>,
     pub fragment_shader: VKShader<'a>,
+
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_allocation: vulkan::Allocation,
+
+    pub pipeline: vk::Pipeline,
+    pub pipeline_layout: vk::PipelineLayout,
 }
 
 impl VKRenderer<'_> {
     pub fn new(
-        vulkan_ctx: VKContext,
+        mut vulkan_ctx: VKContext,
         frames_in_flight: u32,
     ) -> Result<Self, Box<dyn error::Error>> {
         let vulkan_present = unsafe {
@@ -187,6 +215,19 @@ impl VKRenderer<'_> {
             &mut vulkan_shader_loader,
         )?;
 
+        let (vertex_buffer, vertex_allocation) = create_vertex_buffer(
+            &vulkan_ctx.vulkan_device,
+            &mut vulkan_ctx.mem_allocator,
+            &vulkan_cmd_pool,
+        )?;
+
+        let (pipeline, pipeline_layout) = create_pipeline(
+            &vulkan_ctx.vulkan_device,
+            &vulkan_ctx.vulkan_swapchain,
+            &vertex_shader.shader_info,
+            &fragment_shader.shader_info,
+        )?;
+
         Ok(Self {
             vulkan_ctx,
             vulkan_shader_loader,
@@ -195,6 +236,12 @@ impl VKRenderer<'_> {
             vulkan_cmd_buffs,
             vertex_shader,
             fragment_shader,
+
+            vertex_buffer,
+            vertex_allocation,
+
+            pipeline,
+            pipeline_layout,
         })
     }
 
@@ -223,7 +270,7 @@ impl VKRenderer<'_> {
 
         let signal_semaphore_infos = &[vk::SemaphoreSubmitInfo::default()
             .semaphore(render_info.done_rendering_gpu)
-            .stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)];
+            .stage_mask(vk::PipelineStageFlags2::CLEAR)];
 
         let submits = [vk::SubmitInfo2::default()
             .wait_semaphore_infos(wait_semaphore_infos)
@@ -265,8 +312,8 @@ impl VKRenderer<'_> {
         let image_memory_barriers = [vk::ImageMemoryBarrier2::default()
             .old_layout(vk::ImageLayout::UNDEFINED)
             .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
-            .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .dst_stage_mask(vk::PipelineStageFlags2::CLEAR)
             .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
             .image(image)
             .subresource_range(sub_resource_range)];
@@ -277,9 +324,10 @@ impl VKRenderer<'_> {
         let present_image_memory_barriers = [vk::ImageMemoryBarrier2::default()
             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-            .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
-            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE_KHR)
+            .src_stage_mask(vk::PipelineStageFlags2::CLEAR)
+            .dst_stage_mask(vk::PipelineStageFlags2::CLEAR)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
             .image(image)
             .subresource_range(sub_resource_range)];
 
@@ -326,6 +374,30 @@ impl Drop for VKRenderer<'_> {
                 .device
                 .device_wait_idle()
                 .unwrap_unchecked();
+
+            self.vulkan_ctx
+                .vulkan_device
+                .device
+                .destroy_pipeline(self.pipeline, None);
+
+            self.vulkan_ctx
+                .vulkan_device
+                .device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+
+            // need to move it out of &mut self so it can be freed by memory allocator, achieved by replacing with empty Allocation
+            let vertex_allocation = std::mem::take(&mut self.vertex_allocation);
+
+            self.vulkan_ctx
+                .mem_allocator
+                .free(vertex_allocation)
+                .unwrap_unchecked();
+
+            self.vulkan_ctx
+                .vulkan_device
+                .device
+                .destroy_buffer(self.vertex_buffer, None);
+
             self.fragment_shader.destroy(&self.vulkan_ctx.vulkan_device);
             self.vertex_shader.destroy(&self.vulkan_ctx.vulkan_device);
 
@@ -336,6 +408,290 @@ impl Drop for VKRenderer<'_> {
                 .device
                 .destroy_command_pool(self.vulkan_cmd_pool, None);
             self.vulkan_ctx.destroy();
+        }
+    }
+}
+
+// Repr C here so that rust does not change the order on compile and it is what vulkan expects
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Vertex {
+    pos: Vec2,
+    color: Vec3,
+}
+
+impl Vertex {
+    const fn new(pos: Vec2, color: Vec3) -> Self {
+        Self { pos, color }
+    }
+
+    // vulkan information for layout in memory
+    fn binding_description() -> vk::VertexInputBindingDescription {
+        vk::VertexInputBindingDescription::default()
+            .binding(0)
+            .stride(size_of::<Vertex>() as u32)
+            .input_rate(vk::VertexInputRate::VERTEX)
+    }
+
+    // vulkan information for the sub elements in memory
+    fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+        let pos = vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0);
+        let color = vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(1)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(size_of::<Vec2>() as u32);
+        [pos, color]
+    }
+}
+
+// this is just for learning it will be split up and organised and made more universal/generic.
+fn create_vertex_buffer(
+    vk_device: &VKDevice,
+    gpu_allocator: &mut vulkan::Allocator,
+    vk_command_pool: &vk::CommandPool,
+) -> Result<(vk::Buffer, vulkan::Allocation), vk::Result> {
+    // our triangle to render
+    static VERTICES: [Vertex; 3] = [
+        Vertex::new(Vec2::new(0.0, -0.5), Vec3::new(1.0, 0.0, 0.0)),
+        Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 1.0, 0.0)),
+        Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+    ];
+
+    // create a staging buffer
+
+    let vk_info = vk::BufferCreateInfo::default()
+        .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+        .size((size_of::<Vertex>() * VERTICES.len()) as u64)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    let staging_buffer = unsafe { vk_device.device.create_buffer(&vk_info, None)? };
+
+    let requirments = unsafe {
+        vk_device
+            .device
+            .get_buffer_memory_requirements(staging_buffer)
+    };
+
+    // allocate memory for staging buffer
+
+    let mut staging_allocation = gpu_allocator
+        .allocate(&vulkan::AllocationCreateDesc {
+            name: "Vertecies Staging",
+            requirements: requirments,
+            location: MemoryLocation::CpuToGpu,
+            linear: true,
+            allocation_scheme: vulkan::AllocationScheme::DedicatedBuffer(staging_buffer),
+        })
+        .unwrap();
+
+    // copy vertecies into staging buffer
+    // potential allignment and non 0 start offset issue?
+
+    let copy_info = presser::copy_from_slice_to_offset_with_align(
+        &VERTICES,
+        &mut staging_allocation,
+        0,
+        requirments.alignment as usize,
+    )
+    .unwrap();
+
+    // bind staging buffer to memory
+
+    unsafe {
+        vk_device.device.bind_buffer_memory(
+            staging_buffer,
+            staging_allocation.memory(),
+            staging_allocation.offset() + copy_info.copy_start_offset as u64,
+        )?
+    };
+
+    // unsafe {
+    //     vk_device.device.unmap_memory(staging_allocation.memory());
+    // };
+
+    // create vertex buffer
+
+    let vk_info = vk::BufferCreateInfo::default()
+        .usage(vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER)
+        .size((size_of::<Vertex>() * VERTICES.len()) as u64)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    let vertex_buffer = unsafe { vk_device.device.create_buffer(&vk_info, None)? };
+
+    let requirments = unsafe {
+        vk_device
+            .device
+            .get_buffer_memory_requirements(vertex_buffer)
+    };
+
+    // allocate memory for vertex buffer
+
+    let vertices_allocation = gpu_allocator
+        .allocate(&vulkan::AllocationCreateDesc {
+            name: "Vertices",
+            requirements: requirments,
+            location: MemoryLocation::GpuOnly,
+            linear: true,
+            allocation_scheme: vulkan::AllocationScheme::DedicatedBuffer(vertex_buffer),
+        })
+        .unwrap();
+
+    // bind vertex buffer to memory
+
+    unsafe {
+        vk_device.device.bind_buffer_memory(
+            vertex_buffer,
+            vertices_allocation.memory(),
+            vertices_allocation.offset(),
+        )?
+    };
+
+    // copy staging buffer memory to vertex buffer memory
+
+    let buff_info = vk::CommandBufferAllocateInfo::default()
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_pool(*vk_command_pool)
+        .command_buffer_count(1);
+
+    let cmd_buffer = unsafe { vk_device.device.allocate_command_buffers(&buff_info)?[0] };
+
+    let begin_info =
+        vk::CommandBufferBeginInfo::default().flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+    let copy_region = vk::BufferCopy::default().size((size_of::<Vertex>() * VERTICES.len()) as u64);
+
+    let cmd_buffer_info = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer)];
+    let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&cmd_buffer_info);
+    unsafe {
+        vk_device
+            .device
+            .begin_command_buffer(cmd_buffer, &begin_info)?;
+
+        vk_device
+            .device
+            .cmd_copy_buffer(cmd_buffer, staging_buffer, vertex_buffer, &[copy_region]);
+
+        vk_device.device.end_command_buffer(cmd_buffer)?;
+
+        vk_device.device.queue_submit2(
+            vk_device.graphics_queue,
+            &[submit_info],
+            vk::Fence::null(),
+        )?;
+
+        // fence more flexible than queue wait idle
+        vk_device.device.queue_wait_idle(vk_device.graphics_queue)?;
+
+        // free single use command buffers
+        vk_device
+            .device
+            .free_command_buffers(*vk_command_pool, &[cmd_buffer]);
+    }
+
+    // clean up staging buffer as we no longer need it
+    gpu_allocator.free(staging_allocation).unwrap();
+
+    unsafe {
+        vk_device.device.destroy_buffer(staging_buffer, None);
+    };
+
+    Ok((vertex_buffer, vertices_allocation))
+}
+
+fn create_pipeline(
+    vk_device: &VKDevice,
+    vk_swapchain: &VKSwapchain,
+    vertex_stage: &vk::PipelineShaderStageCreateInfo,
+    fragment_stage: &vk::PipelineShaderStageCreateInfo,
+) -> Result<(vk::Pipeline, vk::PipelineLayout), vk::Result> {
+    // we wan't the viewport and scissor to be dynamic so that we don't have to recreat the pipeline when the window size changes
+    let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
+        .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
+
+    let bind_desc = [Vertex::binding_description()];
+    let attr_desc = Vertex::attribute_descriptions();
+
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&bind_desc)
+        .vertex_attribute_descriptions(&attr_desc);
+
+    //tringle list aka no vertices are shared between triangles
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    // only specify count because viewport state is dynamic
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .viewport_count(1)
+        .scissor_count(1);
+
+    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(PolygonMode::FILL)
+        .line_width(1.0)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false);
+
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    // no depth test code as not needed yet
+
+    //blending disabled Probably need alpha blending later
+    let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+        .blend_enable(false)];
+
+    let color_blend_state =
+        vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
+
+    let color_attachment_formats = [vk_swapchain.capibilities.ideal_surface_format().format];
+
+    let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
+        .color_attachment_formats(&color_attachment_formats);
+
+    let layout_info = vk::PipelineLayoutCreateInfo::default();
+
+    let pipeline_layout = unsafe {
+        vk_device
+            .device
+            .create_pipeline_layout(&layout_info, None)?
+    };
+
+    let stages = [*vertex_stage, *fragment_stage];
+
+    let create_infos = &[vk::GraphicsPipelineCreateInfo::default()
+        .dynamic_state(&dynamic_state)
+        .vertex_input_state(&vertex_input_state)
+        .input_assembly_state(&input_assembly_state)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization_state)
+        .multisample_state(&multisample_state)
+        .color_blend_state(&color_blend_state)
+        .layout(pipeline_layout)
+        .push_next(&mut rendering_info)
+        .stages(&stages)];
+
+    unsafe {
+        let pipline_result = vk_device.device.create_graphics_pipelines(
+            vk::PipelineCache::null(),
+            create_infos,
+            None,
+        );
+
+        // the result of create_graphics_pipeline can include the pipeleines that did get sucesfully created.
+        // this match statement just ignores that ant returns error if any of them fail
+        match pipline_result {
+            Ok(pipeline) => Ok((pipeline[0], pipeline_layout)),
+            Err(error) => Err(error.1),
         }
     }
 }
