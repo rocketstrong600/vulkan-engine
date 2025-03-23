@@ -386,7 +386,9 @@ impl VKRenderer<'_> {
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(clear_value)];
 
-        let render_area_extent = vk::Rect2D::default().extent(render_area);
+        let render_area_extent = vk::Rect2D::default()
+            .extent(render_area)
+            .offset(vk::Offset2D::default().x(0).y(0));
 
         let rendering_info = vk::RenderingInfo::default()
             .color_attachments(&color_attachments)
@@ -555,7 +557,7 @@ fn create_vertex_buffer(
             requirements: requirments,
             location: MemoryLocation::CpuToGpu,
             linear: true,
-            allocation_scheme: vulkan::AllocationScheme::GpuAllocatorManaged,
+            allocation_scheme: vulkan::AllocationScheme::DedicatedBuffer(staging_buffer),
         })
         .unwrap();
 
@@ -570,16 +572,17 @@ fn create_vertex_buffer(
     };
 
     // copy vertecies into staging buffer
-    // potential allignment and non 0 start offset issue?
+    // non 0 start offset issue?
 
-    let copy_info =
-        presser::copy_from_slice_to_offset(&vertices, &mut staging_allocation, 0).unwrap();
+    let copy_info = presser::copy_from_slice_to_offset_with_align(
+        &vertices,
+        &mut staging_allocation,
+        0,
+        requirments.alignment as usize,
+    )
+    .unwrap();
 
-    //info!("Vertex Memory Offset: {}", copy_info.copy_start_offset);
-
-    // unsafe {
-    //     vk_device.device.unmap_memory(staging_allocation.memory());
-    // };
+    info!("Vertex Memory Offset: {}", copy_info.copy_start_offset);
 
     // create vertex buffer
 
@@ -604,7 +607,7 @@ fn create_vertex_buffer(
             requirements: requirments,
             location: MemoryLocation::GpuOnly,
             linear: true,
-            allocation_scheme: vulkan::AllocationScheme::GpuAllocatorManaged,
+            allocation_scheme: vulkan::AllocationScheme::DedicatedBuffer(vertex_buffer),
         })
         .unwrap();
 
