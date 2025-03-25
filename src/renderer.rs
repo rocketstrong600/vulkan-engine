@@ -647,7 +647,7 @@ fn create_vertex_buffer(
         // fence more flexible than queue wait idle
         vk_device.device.queue_wait_idle(vk_device.graphics_queue)?;
 
-        // free single use command buffers
+        // free single use command buffer
         vk_device
             .device
             .free_command_buffers(*vk_command_pool, &[cmd_buffer]);
