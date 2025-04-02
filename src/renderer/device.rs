@@ -105,19 +105,11 @@ impl VKDevice {
             .queue_family_index(ideal_graphics_queue)
             .queue_priorities(&priorities);
 
+        // features should probably be in requirments
         let features = vk::PhysicalDeviceFeatures::default();
 
         // array of Requested Device extension_names as c string ptr
         let device_extension_names = dev_requirments.get_requirments_raw();
-
-        // Dynamic Rendering Ext configuration
-        // Syncronization2 Ext configuration
-        // TODO: Feature Configuration Should probably be settable Outside of here maybe in Device Requirments Struct
-        // let mut dynamic_rendering_feature =
-        // vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
-
-        // let mut synchronization2_feature =
-        // vk::PhysicalDeviceSynchronization2FeaturesKHR::default().synchronization2(true);
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .enabled_extension_names(&device_extension_names)

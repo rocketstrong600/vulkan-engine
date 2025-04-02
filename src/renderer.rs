@@ -264,7 +264,7 @@ impl VKRenderer<'_> {
     }
 
     pub fn render(&mut self, window: &Window) {
-        let vk_ctx = &self.vulkan_ctx;
+        let vk_ctx = &mut self.vulkan_ctx;
         let vk_present = &mut self.vulkan_present;
         let vk_device = &vk_ctx.vulkan_device;
 
@@ -314,7 +314,7 @@ impl VKRenderer<'_> {
         // required for wayland
         window.pre_present_notify();
 
-        vk_present.present_frame(vk_ctx).unwrap();
+        vk_present.present_frame(vk_ctx, window).unwrap();
     }
 
     unsafe fn record_cmd_buffer(
@@ -340,9 +340,11 @@ impl VKRenderer<'_> {
         let image_memory_barriers = [vk::ImageMemoryBarrier2::default()
             .old_layout(vk::ImageLayout::UNDEFINED)
             .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(
+                vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::COLOR_ATTACHMENT_READ,
+            )
             .image(image)
             .subresource_range(sub_resource_range)];
 
@@ -564,7 +566,7 @@ fn create_vertex_buffer(
     // copy vertecies into staging buffer
     // non 0 start offset issue?
 
-    let copy_info = presser::copy_from_slice_to_offset_with_align(
+    let _copy_info = presser::copy_from_slice_to_offset_with_align(
         &vertices,
         &mut staging_allocation,
         0,
@@ -572,7 +574,7 @@ fn create_vertex_buffer(
     )
     .unwrap();
 
-    info!("Vertex Memory Offset: {}", copy_info.copy_start_offset);
+    //info!("Vertex Memory Offset: {}", copy_info.copy_start_offset);
 
     // create vertex buffer
 

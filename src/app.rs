@@ -64,10 +64,11 @@ impl ApplicationHandler for App<'_> {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => {
+            WindowEvent::Resized(_size) => {
                 if let App::Initialised(app_ctx) = self {
-
                     // Window Resized
+                    //info!("resized window");
+                    app_ctx.vulkan_renderer.vulkan_present.invalidate_swap();
                 }
             }
             WindowEvent::RedrawRequested => {

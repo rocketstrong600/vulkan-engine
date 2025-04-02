@@ -1,4 +1,5 @@
 use crate::renderer::VKInstance;
+use crate::utils::ReplaceWith;
 use ash::{
     khr::{surface, swapchain},
     vk::{self, Handle},
@@ -261,8 +262,34 @@ impl VKSwapchain {
             .destroy_swapchain(self.swapchain, None);
     }
 
-    pub fn rebuild_swapchain(self) {}
+    /// rebuild swapchain
+    pub fn rebuild_swapchain(
+        &mut self,
+        vk_instance: &VKInstance,
+        vk_device: &VKDevice,
+        vk_surface: &VKSurface,
+        window: &Window,
+    ) -> Result<(), vk::Result> {
+        unsafe {
+            vk_device.device.queue_wait_idle(vk_device.graphics_queue)?;
+        }
+        // attempt to create new swapchain
+        match VKSwapchain::new(vk_instance, vk_device, vk_surface, window) {
+            // if succesfull replace old swapchain with new
+            Ok(new_swap) => {
+                self.replace_with(|mut old_swap| unsafe {
+                    old_swap.destroy(vk_device);
+                    new_swap
+                });
+                Ok(())
+            }
+            // if failed return err
+            Err(err) => Err(err),
+        }
+    }
 }
+
+impl<F> ReplaceWith<F> for VKSwapchain {}
 
 /// Manages Syncronisation objects and part of algo for presenting to screen
 /// when rendering a frame
@@ -280,6 +307,8 @@ pub struct VKPresent {
     img_rendered_cpu: Vec<vk::Fence>,     // render Finshed CPU Fence
     img_aquired_index: u32,
     img_in_flight: Vec<vk::Fence>,
+
+    swap_invalid: bool,
 }
 
 pub struct ToRenderInfo {
@@ -313,7 +342,6 @@ impl VKPresent {
 
     /// returns aquired image and semaphore
     /// for when image is ready
-    // TODO: Handle subobtimal or invalidaed swapchain
     pub fn aquire_img(&mut self, vk_ctx: &VKContext) -> Result<ToRenderInfo, vk::Result> {
         let img_rendered_cpu = *self
             .img_rendered_cpu
@@ -352,8 +380,11 @@ impl VKPresent {
                 )?
         };
 
+        // if swapchain is invalid
         if img_suboptimal {
             warn!("Swapchain Suboptimal");
+
+            self.swap_invalid = true;
         }
 
         // Store the aquired image index for presentation
@@ -401,8 +432,12 @@ impl VKPresent {
     /// waits on rendered semaphore
     /// and then submits frame
     /// image_index is index of image obtained from aquire_image
-    // TODO: Handle subobtimal or invalidaed swapchain
-    pub fn present_frame(&mut self, vk_ctx: &VKContext) -> Result<(), vk::Result> {
+    /// if swap is invalid it will be recreated
+    pub fn present_frame(
+        &mut self,
+        vk_ctx: &mut VKContext,
+        window: &Window,
+    ) -> Result<(), vk::Result> {
         let swapchains = &[vk_ctx.vulkan_swapchain.swapchain];
         let semaphores = &[*self
             .img_rendered_gpu
@@ -422,10 +457,23 @@ impl VKPresent {
                 .queue_present(vk_ctx.vulkan_device.graphics_queue, &present_info)?;
         }
         self.frame = (self.frame + 1) % self.max_frames;
+
+        if self.swap_invalid {
+            let rebuild_status = vk_ctx.vulkan_swapchain.rebuild_swapchain(
+                &vk_ctx.vulkan_instance,
+                &vk_ctx.vulkan_device,
+                &vk_ctx.vulkan_surface,
+                &window,
+            );
+
+            if rebuild_status.is_ok() {
+                self.swap_invalid = false;
+            }
+        }
         Ok(())
     }
 
-    // Recreates Sync Objects Such as Semaphores and Fences
+    /// Recreates Sync Objects Such as Semaphores and Fences
     unsafe fn recreate_sync(mut self, vk_ctx: &VKContext) -> Result<Self, vk::Result> {
         let vk_device = &vk_ctx.vulkan_device;
         self.destroy(vk_ctx);
@@ -449,6 +497,16 @@ impl VKPresent {
         }
 
         Ok(self)
+    }
+
+    /// marks swap invalid
+    pub fn invalidate_swap(&mut self) {
+        self.swap_invalid = true;
+    }
+
+    /// returns true if swap is invalid
+    pub fn is_swap_invalid(&self) -> bool {
+        self.swap_invalid
     }
 
     /// Destroys Sync Objects
