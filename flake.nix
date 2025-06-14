@@ -10,7 +10,7 @@
       let
         pkgs = import nixpkgs { inherit system; };
         naersk-lib = pkgs.callPackage naersk { };
-        shader-slang = pkgs.callPackage ./NixDep/shader-slang.nix { };
+        #shader-slang = pkgs.callPackage ./NixDep/shader-slang.nix { };
       in
       {
 
