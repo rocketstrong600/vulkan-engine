@@ -18,7 +18,7 @@ use std::ffi::c_char;
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 use log::info;
 
@@ -519,6 +519,20 @@ impl Vertex {
     }
 }
 
+// Repr C here so that rust does not change the order on compile and it is what vulkan expects
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct ViewProjection {
+    projection: Mat4,
+}
+
+impl ViewProjection {
+    fn new(fov: f32, aspect_ratio: f32, z_near: f32) -> Self {
+        let projection = Mat4::perspective_infinite_reverse_lh(fov, aspect_ratio, z_near);
+        Self { projection }
+    }
+}
+
 // this is just for learning it will be split up and organised and made more universal/generic.
 fn create_vertex_buffer(
     vk_device: &VKDevice,
@@ -720,7 +734,25 @@ fn create_pipeline(
     let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
         .color_attachment_formats(&color_attachment_formats);
 
-    let layout_info = vk::PipelineLayoutCreateInfo::default();
+    // Move out of here
+    // this is the descriptor layout for the uniform buffer that contains the view prjoction matrix
+
+    let uniform_buffer_desc = [vk::DescriptorSetLayoutBinding::default()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX)];
+
+    let descriptor_layout_info =
+        vk::DescriptorSetLayoutCreateInfo::default().bindings(&uniform_buffer_desc);
+
+    let descriptor_layout = [unsafe {
+        vk_device
+            .device
+            .create_descriptor_set_layout(&descriptor_layout_info, None)?
+    }];
+
+    let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_layout);
 
     let pipeline_layout = unsafe {
         vk_device
