@@ -11,7 +11,7 @@ use winit::{
     window::Window,
 };
 
-use crate::renderer::{device::VKDevice, VKContext};
+use crate::renderer::{VKContext, device::VKDevice};
 
 pub struct VKSurface {
     pub surface: vk::SurfaceKHR,
@@ -56,7 +56,9 @@ impl VKSurface {
     /// Destroy Before Vulkan Instance
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self) {
-        self.surface_loader.destroy_surface(self.surface, None);
+        unsafe {
+            self.surface_loader.destroy_surface(self.surface, None);
+        }
     }
 }
 
@@ -171,6 +173,7 @@ impl VKSwapchain {
         vk_device: &VKDevice,
         vk_surface: &VKSurface,
         window: &Window,
+        vk_swapchain_old: Option<vk::SwapchainKHR>,
     ) -> Result<Self, vk::Result> {
         let physical_device = vk_device.p_device;
         let instance = &vk_instance.instance;
@@ -182,7 +185,7 @@ impl VKSwapchain {
 
         let image_extent = capibilities.get_extent(window);
 
-        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
+        let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(vk_surface.surface)
             .min_image_count(capibilities.ideal_n_images())
             .image_format(ideal_surface_format.format)
@@ -195,6 +198,10 @@ impl VKSwapchain {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE) // Alpha Blending with other windows = Opaque
             .present_mode(capibilities.ideal_present_mode())
             .clipped(true); // ignore Pixel covered by other windows
+
+        if let Some(vk_swapchain_old) = vk_swapchain_old {
+            swapchain_create_info = swapchain_create_info.old_swapchain(vk_swapchain_old);
+        }
 
         let swapchain_loader = swapchain::Device::new(instance, device);
 
@@ -255,11 +262,13 @@ impl VKSwapchain {
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
-        self.image_views
-            .iter()
-            .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
-        self.swapchain_loader
-            .destroy_swapchain(self.swapchain, None);
+        unsafe {
+            self.image_views
+                .iter()
+                .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
+        }
     }
 
     /// rebuild swapchain
@@ -273,8 +282,15 @@ impl VKSwapchain {
         unsafe {
             vk_device.device.queue_wait_idle(vk_device.graphics_queue)?;
         }
+        let old_swapchain = self.swapchain;
         // attempt to create new swapchain
-        match VKSwapchain::new(vk_instance, vk_device, vk_surface, window) {
+        match VKSwapchain::new(
+            vk_instance,
+            vk_device,
+            vk_surface,
+            window,
+            Some(old_swapchain),
+        ) {
             // if succesfull replace old swapchain with new
             Ok(new_swap) => {
                 self.replace_with(|mut old_swap| unsafe {
@@ -337,7 +353,7 @@ impl VKPresent {
     ) -> Result<Self, vk::Result> {
         self.max_frames = frames;
         self.frame %= self.max_frames;
-        self.recreate_sync(vk_ctx)
+        unsafe { self.recreate_sync(vk_ctx) }
     }
 
     /// returns aquired image and semaphore
@@ -475,25 +491,27 @@ impl VKPresent {
 
     /// Recreates Sync Objects Such as Semaphores and Fences
     unsafe fn recreate_sync(mut self, vk_ctx: &VKContext) -> Result<Self, vk::Result> {
-        let vk_device = &vk_ctx.vulkan_device;
-        self.destroy(vk_ctx);
+        unsafe {
+            let vk_device = &vk_ctx.vulkan_device;
+            self.destroy(vk_ctx);
 
-        for _ in 0..self.max_frames {
-            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
-            let img_semaphore = vk_device
-                .device
-                .create_semaphore(&semaphore_create_info, None)?;
-            self.img_aquired_gpu.push(img_semaphore);
+            for _ in 0..self.max_frames {
+                let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+                let img_semaphore = vk_device
+                    .device
+                    .create_semaphore(&semaphore_create_info, None)?;
+                self.img_aquired_gpu.push(img_semaphore);
 
-            let renderd_semaphore = vk_device
-                .device
-                .create_semaphore(&semaphore_create_info, None)?;
-            self.img_rendered_gpu.push(renderd_semaphore);
+                let renderd_semaphore = vk_device
+                    .device
+                    .create_semaphore(&semaphore_create_info, None)?;
+                self.img_rendered_gpu.push(renderd_semaphore);
 
-            let fence_create_info =
-                vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-            let renderd_fence = vk_device.device.create_fence(&fence_create_info, None)?;
-            self.img_rendered_cpu.push(renderd_fence);
+                let fence_create_info =
+                    vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+                let renderd_fence = vk_device.device.create_fence(&fence_create_info, None)?;
+                self.img_rendered_cpu.push(renderd_fence);
+            }
         }
 
         Ok(self)
@@ -516,24 +534,27 @@ impl VKPresent {
     /// Don't use any destroyed Sync Handles
     pub unsafe fn destroy(&mut self, vk_ctx: &VKContext) {
         let vk_device = &vk_ctx.vulkan_device;
-        vk_device.device.device_wait_idle().unwrap_unchecked();
-        self.img_aquired_gpu.iter().for_each(|semaphore| {
-            if !semaphore.is_null() {
-                vk_device.device.destroy_semaphore(*semaphore, None);
-            }
-        });
 
-        self.img_rendered_gpu.iter().for_each(|semaphore| {
-            if !semaphore.is_null() {
-                vk_device.device.destroy_semaphore(*semaphore, None);
-            }
-        });
+        unsafe {
+            vk_device.device.device_wait_idle().unwrap_unchecked();
+            self.img_aquired_gpu.iter().for_each(|semaphore| {
+                if !semaphore.is_null() {
+                    vk_device.device.destroy_semaphore(*semaphore, None);
+                }
+            });
 
-        self.img_rendered_cpu.iter().for_each(|fence| {
-            if !fence.is_null() {
-                vk_device.device.destroy_fence(*fence, None);
-            }
-        });
+            self.img_rendered_gpu.iter().for_each(|semaphore| {
+                if !semaphore.is_null() {
+                    vk_device.device.destroy_semaphore(*semaphore, None);
+                }
+            });
+
+            self.img_rendered_cpu.iter().for_each(|fence| {
+                if !fence.is_null() {
+                    vk_device.device.destroy_fence(*fence, None);
+                }
+            });
+        }
 
         self.img_aquired_gpu.clear();
         self.img_rendered_gpu.clear();

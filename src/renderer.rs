@@ -6,9 +6,9 @@ use crate::renderer::device::VKDevice;
 use crate::renderer::presentation::VKPresent;
 use crate::utils::GameInfo;
 use ash::vk::{CommandBufferUsageFlags, PolygonMode, ShaderStageFlags};
-use ash::{vk, Entry, Instance};
-use gpu_allocator::vulkan;
+use ash::{Entry, Instance, vk};
 use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan;
 use presser;
 
 use presentation::{VKSurface, VKSwapchain};
@@ -19,8 +19,6 @@ use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 
 use glam::{Mat4, Vec2, Vec3};
-
-use log::info;
 
 pub const ENGINE_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
@@ -86,7 +84,9 @@ impl VKInstance {
     /// Instance should be Destroyed After All Other Vulkan Objects
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self) {
-        self.instance.destroy_instance(None);
+        unsafe {
+            self.instance.destroy_instance(None);
+        }
     }
 }
 
@@ -105,8 +105,13 @@ impl VKContext {
         let vulkan_instance = VKInstance::new(game_info, Some(vk_instance_ext))?;
         let vulkan_surface = VKSurface::new(&vulkan_instance, window)?;
         let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
-        let vulkan_swapchain =
-            VKSwapchain::new(&vulkan_instance, &vulkan_device, &vulkan_surface, &window)?;
+        let vulkan_swapchain = VKSwapchain::new(
+            &vulkan_instance,
+            &vulkan_device,
+            &vulkan_surface,
+            &window,
+            None,
+        )?;
 
         let alloc_desc = vulkan::AllocatorCreateDesc {
             instance: vulkan_instance.instance.clone(),
@@ -132,11 +137,13 @@ impl VKContext {
     /// Vulkan CTX should be destroyed after all of your vk objects
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self) {
-        drop(std::mem::take(&mut self.mem_allocator));
-        self.vulkan_swapchain.destroy(&self.vulkan_device);
-        self.vulkan_surface.destroy();
-        self.vulkan_device.destroy();
-        self.vulkan_instance.destroy();
+        unsafe {
+            drop(std::mem::take(&mut self.mem_allocator));
+            self.vulkan_swapchain.destroy(&self.vulkan_device);
+            self.vulkan_surface.destroy();
+            self.vulkan_device.destroy();
+            self.vulkan_instance.destroy();
+        }
     }
 }
 
@@ -395,42 +402,46 @@ impl VKRenderer<'_> {
             .min_depth(0.0)
             .max_depth(1.0)];
 
-        vk_device
-            .device
-            .begin_command_buffer(cmd_buffer, &begin_info)
-            .unwrap();
+        unsafe {
+            vk_device
+                .device
+                .begin_command_buffer(cmd_buffer, &begin_info)
+                .unwrap();
 
-        vk_device
-            .device
-            .cmd_pipeline_barrier2(cmd_buffer, &dependency_info);
+            vk_device
+                .device
+                .cmd_pipeline_barrier2(cmd_buffer, &dependency_info);
 
-        vk_device
-            .device
-            .cmd_begin_rendering(cmd_buffer, &rendering_info);
+            vk_device
+                .device
+                .cmd_begin_rendering(cmd_buffer, &rendering_info);
 
-        vk_device
-            .device
-            .cmd_bind_pipeline(cmd_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
+            vk_device.device.cmd_bind_pipeline(
+                cmd_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline,
+            );
 
-        vk_device
-            .device
-            .cmd_bind_vertex_buffers(cmd_buffer, 0, &[vertex_buffer], &[0u64]);
+            vk_device
+                .device
+                .cmd_bind_vertex_buffers(cmd_buffer, 0, &[vertex_buffer], &[0u64]);
 
-        vk_device.device.cmd_set_viewport(cmd_buffer, 0, &viewport);
+            vk_device.device.cmd_set_viewport(cmd_buffer, 0, &viewport);
 
-        vk_device
-            .device
-            .cmd_set_scissor(cmd_buffer, 0, &[render_area_extent]);
+            vk_device
+                .device
+                .cmd_set_scissor(cmd_buffer, 0, &[render_area_extent]);
 
-        vk_device.device.cmd_draw(cmd_buffer, vertices_len, 1, 0, 0);
+            vk_device.device.cmd_draw(cmd_buffer, vertices_len, 1, 0, 0);
 
-        vk_device.device.cmd_end_rendering(cmd_buffer);
+            vk_device.device.cmd_end_rendering(cmd_buffer);
 
-        vk_device
-            .device
-            .cmd_pipeline_barrier2(cmd_buffer, &present_dependency_info);
+            vk_device
+                .device
+                .cmd_pipeline_barrier2(cmd_buffer, &present_dependency_info);
 
-        vk_device.device.end_command_buffer(cmd_buffer)
+            vk_device.device.end_command_buffer(cmd_buffer)
+        }
     }
 }
 

@@ -1,15 +1,15 @@
 [package]
 name = "vulkan-engine"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 ash = "0.38.0"
 ash-window = "0.13.0"
-glam = "0.30.0"
-gpu-allocator = "0.27.0"
-log = "0.4.25"
+glam = "0.30.10"
+gpu-allocator = "0.28.0"
+log = "0.4.29"
 presser = "0.3.1"
 simple_logger = "5.0.0"
-thiserror = "2.0.12"
-winit = "0.30.9"
+thiserror = "2.0.17"
+winit = "0.30.12"

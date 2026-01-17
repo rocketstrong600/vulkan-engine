@@ -1,11 +1,11 @@
 use ash::vk::QueueFlags;
-use ash::{khr, vk, Device, Instance};
+use ash::{Device, Instance, khr, vk};
 use log::info;
 use std::error;
 use std::ffi::CStr;
 
-use crate::renderer::presentation::{VKSurface, VKSwapchainCapabilities};
 use crate::renderer::VKInstance;
+use crate::renderer::presentation::{VKSurface, VKSwapchainCapabilities};
 pub struct VKDevice {
     pub p_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
@@ -190,8 +190,10 @@ impl VKDevice {
     /// Read VK Docs For Destruction Order
     /// Device must be destroyed before the instance
     pub unsafe fn destroy(&mut self) {
-        self.device.device_wait_idle().unwrap();
-        self.device.destroy_device(None);
+        unsafe {
+            self.device.device_wait_idle().unwrap();
+            self.device.destroy_device(None);
+        }
     }
 }
 
