@@ -218,12 +218,56 @@ impl VKRenderer<'_> {
         )?;
 
         // our triangle to render
-        static VERTICES: [Vertex; 3] = [
-            Vertex::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)),
-            Vertex::new(Vec3::new(0.5, 0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)),
-            Vertex::new(Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 1.0)),
-        ];
+        // static VERTICES: [Vertex; 3] = [
+        //     Vertex::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)),
+        //     Vertex::new(Vec3::new(0.5, 0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)),
+        //     Vertex::new(Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 1.0)),
+        // ];
 
+        static VERTICES: [Vertex; 36] = [
+            // FRONT FACE (Z = 0.5) - RED
+            Vertex::new(Vec3::new(-0.5, -0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vec3::new(-0.5, -0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)),
+            // BACK FACE (Z = -0.5) - GREEN
+            Vertex::new(Vec3::new(0.5, -0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+            // LEFT FACE (X = -0.5) - BLUE
+            Vertex::new(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, -0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, -0.5), Vec3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.0, 0.0, 1.0)),
+            // RIGHT FACE (X = 0.5) - YELLOW
+            Vertex::new(Vec3::new(0.5, -0.5, 0.5), Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, -0.5), Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, -0.5), Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, -0.5), Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, 0.5), Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, 0.5), Vec3::new(1.0, 1.0, 0.0)),
+            // TOP FACE (Y = 0.5) - CYAN
+            Vertex::new(Vec3::new(-0.5, 0.5, 0.5), Vec3::new(0.0, 1.0, 1.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, 0.5), Vec3::new(0.0, 1.0, 1.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, -0.5), Vec3::new(0.0, 1.0, 1.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, -0.5), Vec3::new(0.0, 1.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, -0.5), Vec3::new(0.0, 1.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, 0.5), Vec3::new(0.0, 1.0, 1.0)),
+            // BOTTOM FACE (Y = -0.5) - MAGENTA
+            Vertex::new(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(1.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, -0.5), Vec3::new(1.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, 0.5), Vec3::new(1.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(0.5, -0.5, 0.5), Vec3::new(1.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, -0.5, 0.5), Vec3::new(1.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(1.0, 0.0, 1.0)),
+        ];
         let vertices_len = VERTICES.len() as u32;
 
         let (vertex_buffer, vertex_allocation) =
@@ -432,8 +476,13 @@ impl VKRenderer<'_> {
             90.0_f32.to_radians(),
             render_area.width as f32 / render_area.height as f32,
             0.1_f32,
-            glam::Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), 45_f32.to_radians()),
-            Vec3::new(0.0, 0.0, 1.0),
+            glam::Quat::from_euler(
+                glam::EulerRot::YXZ,
+                45_f32.to_radians(),
+                -45_f32.to_radians(),
+                0_f32.to_radians(),
+            ),
+            Vec3::new(2.0, 2.0, 2.0),
         );
 
         unsafe {
@@ -596,7 +645,8 @@ impl CameraTransforms {
         rotation: glam::Quat,
         translation: Vec3,
     ) -> Self {
-        let projection = Mat4::perspective_infinite_reverse_rh(fov, aspect_ratio, z_near);
+        let mut projection = Mat4::perspective_infinite_reverse_rh(fov, aspect_ratio, z_near);
+        projection.y_axis.y *= -1.0;
         let transform = Mat4::from_rotation_translation(rotation, translation).inverse();
         let view_projection = projection * transform;
         Self { view_projection }
@@ -782,7 +832,7 @@ fn create_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::NONE)
+        .cull_mode(vk::CullModeFlags::FRONT)
         .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(false);
 
