@@ -472,17 +472,19 @@ impl VKRenderer<'_> {
             .min_depth(0.0)
             .max_depth(1.0)];
 
+        let aspect_ratio = render_area.width as f32 / render_area.height as f32;
+
         let camera_mat = CameraTransforms::new(
-            90.0_f32.to_radians(),
-            render_area.width as f32 / render_area.height as f32,
+            110.0_f32.to_radians(),
+            aspect_ratio,
             0.1_f32,
             glam::Quat::from_euler(
                 glam::EulerRot::YXZ,
                 45_f32.to_radians(),
-                -45_f32.to_radians(),
+                -30_f32.to_radians(),
                 0_f32.to_radians(),
             ),
-            Vec3::new(2.0, 2.0, 2.0),
+            Vec3::new(1.5, 1.0, 1.5),
         );
 
         unsafe {
