@@ -1,5 +1,6 @@
 use ash::vk::QueueFlags;
 use ash::{Device, Instance, khr, vk};
+use gpu_allocator::vulkan;
 use log::info;
 use std::error;
 use std::ffi::CStr;
@@ -7,6 +8,7 @@ use std::ffi::CStr;
 use crate::renderer::VKInstance;
 use crate::renderer::presentation::{VKSurface, VKSwapchainCapabilities};
 pub struct VKDevice {
+    pub mem_allocator: vulkan::Allocator, //drop order must be first
     pub p_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
     pub queue_index: u32,
@@ -133,11 +135,23 @@ impl VKDevice {
         // Get Graphics queue for logical devices
         let graphics_queue = unsafe { device.get_device_queue(ideal_graphics_queue, 0u32) };
 
+        let alloc_desc = vulkan::AllocatorCreateDesc {
+            instance: instance.instance.clone(),
+            device: device.clone(),
+            physical_device: p_device,
+            debug_settings: Default::default(),
+            buffer_device_address: true,
+            allocation_sizes: Default::default(),
+        };
+
+        let mem_allocator = vulkan::Allocator::new(&alloc_desc)?;
+
         Ok(Self {
             p_device,
             device,
             graphics_queue,
             queue_index: ideal_graphics_queue,
+            mem_allocator,
         })
     }
 
@@ -184,6 +198,81 @@ impl VKDevice {
         let physical_device = physical_devices.last().ok_or("No Suitable Devices Found")?;
         // return device if score was greater than 0
         Ok((*physical_device.1, physical_device.2))
+    }
+
+    pub fn create_image(
+        &mut self,
+        image_extent: vk::Extent2D,
+        image_format: vk::Format,
+        image_tiling: vk::ImageTiling,
+        image_usage: vk::ImageUsageFlags,
+        mem_location: gpu_allocator::MemoryLocation,
+    ) -> Result<(vk::Image, vulkan::Allocation), vk::Result> {
+        let image_create_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(
+                vk::Extent3D::default()
+                    .height(image_extent.height)
+                    .width(image_extent.width)
+                    .depth(1),
+            )
+            .mip_levels(1)
+            .array_layers(1)
+            .format(image_format)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .tiling(image_tiling)
+            .usage(image_usage)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let image = unsafe { self.device.create_image(&image_create_info, None)? };
+        let mem_req = unsafe { self.device.get_image_memory_requirements(image) };
+
+        let linear: bool = image_tiling == vk::ImageTiling::LINEAR;
+
+        let allocation = self
+            .mem_allocator
+            .allocate(&vulkan::AllocationCreateDesc {
+                name: "Depth Image",
+                requirements: mem_req,
+                location: mem_location,
+                linear: linear,
+                allocation_scheme: vulkan::AllocationScheme::DedicatedImage(image),
+            })
+            .unwrap();
+
+        unsafe {
+            self.device
+                .bind_image_memory(image, allocation.memory(), allocation.offset())?
+        };
+        Ok((image, allocation))
+    }
+
+    pub fn create_image_view(
+        &self,
+        vk_image: vk::Image,
+        image_format: vk::Format,
+        aspect_mask: vk::ImageAspectFlags,
+    ) -> Result<vk::ImageView, vk::Result> {
+        let image_view_create_info = vk::ImageViewCreateInfo::default()
+            .image(vk_image)
+            .view_type(vk::ImageViewType::TYPE_2D) // it is a 2d image
+            .format(image_format) // the colour format matches the swapchain
+            .components(
+                vk::ComponentMapping::default()
+                    .r(vk::ComponentSwizzle::IDENTITY)
+                    .g(vk::ComponentSwizzle::IDENTITY)
+                    .b(vk::ComponentSwizzle::IDENTITY)
+                    .a(vk::ComponentSwizzle::IDENTITY),
+            ) // no components are Swizzled aka swapped or changed
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(aspect_mask)
+                    .base_mip_level(0)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            ); // 1 colour resource spanning the whole image
+        unsafe { self.device.create_image_view(&image_view_create_info, None) }
     }
 
     /// # Safety

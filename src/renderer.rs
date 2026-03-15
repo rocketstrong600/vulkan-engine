@@ -5,7 +5,7 @@ pub mod shader;
 use crate::renderer::device::VKDevice;
 use crate::renderer::presentation::VKPresent;
 use crate::utils::GameInfo;
-use ash::vk::{CommandBufferUsageFlags, PolygonMode, ShaderStageFlags};
+use ash::vk::{CommandBufferUsageFlags, CompareOp, PolygonMode, ShaderStageFlags};
 use ash::{Entry, Instance, vk};
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan;
@@ -18,7 +18,7 @@ use std::ffi::c_char;
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec3};
 
 pub const ENGINE_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const ENGINE_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
@@ -92,7 +92,6 @@ impl VKInstance {
 
 //Safe Destruction Order structs drop from top to bottom.
 pub struct VKContext {
-    pub mem_allocator: Option<vulkan::Allocator>,
     pub vulkan_swapchain: VKSwapchain,
     pub vulkan_surface: VKSurface,
     pub vulkan_device: VKDevice,
@@ -104,28 +103,17 @@ impl VKContext {
         let vk_instance_ext = display_vk_ext(window)?;
         let vulkan_instance = VKInstance::new(game_info, Some(vk_instance_ext))?;
         let vulkan_surface = VKSurface::new(&vulkan_instance, window)?;
-        let vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
+        let mut vulkan_device = VKDevice::new(&vulkan_instance, &vulkan_surface)?;
+
         let vulkan_swapchain = VKSwapchain::new(
             &vulkan_instance,
-            &vulkan_device,
+            &mut vulkan_device,
             &vulkan_surface,
             &window,
             None,
         )?;
 
-        let alloc_desc = vulkan::AllocatorCreateDesc {
-            instance: vulkan_instance.instance.clone(),
-            device: vulkan_device.device.clone(),
-            physical_device: vulkan_device.p_device,
-            debug_settings: Default::default(),
-            buffer_device_address: true,
-            allocation_sizes: Default::default(),
-        };
-
-        let mem_allocator = Some(vulkan::Allocator::new(&alloc_desc)?);
-
         Ok(Self {
-            mem_allocator,
             vulkan_instance,
             vulkan_device,
             vulkan_surface,
@@ -138,8 +126,7 @@ impl VKContext {
     /// Read VK Docs For Destruction Order
     pub unsafe fn destroy(&mut self) {
         unsafe {
-            drop(std::mem::take(&mut self.mem_allocator));
-            self.vulkan_swapchain.destroy(&self.vulkan_device);
+            self.vulkan_swapchain.destroy(&mut self.vulkan_device);
             self.vulkan_surface.destroy();
             self.vulkan_device.destroy();
             self.vulkan_instance.destroy();
@@ -170,6 +157,8 @@ pub struct VKRenderer<'a> {
 
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
+
+    pub descriptor_layout: vk::DescriptorSetLayout,
 
     pub vertices_len: u32,
 }
@@ -230,21 +219,17 @@ impl VKRenderer<'_> {
 
         // our triangle to render
         static VERTICES: [Vertex; 3] = [
-            Vertex::new(Vec2::new(0.0, -0.5), Vec3::new(1.0, 0.0, 0.0)),
-            Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 1.0, 0.0)),
-            Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+            Vertex::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::new(Vec3::new(0.5, 0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)),
+            Vertex::new(Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 1.0)),
         ];
 
         let vertices_len = VERTICES.len() as u32;
 
-        let (vertex_buffer, vertex_allocation) = create_vertex_buffer(
-            &vulkan_ctx.vulkan_device,
-            vulkan_ctx.mem_allocator.as_mut().unwrap(),
-            &vulkan_cmd_pool,
-            &VERTICES,
-        )?;
+        let (vertex_buffer, vertex_allocation) =
+            create_vertex_buffer(&mut vulkan_ctx.vulkan_device, &vulkan_cmd_pool, &VERTICES)?;
 
-        let (pipeline, pipeline_layout) = create_pipeline(
+        let (pipeline, pipeline_layout, descriptor_layout) = create_pipeline(
             &vulkan_ctx.vulkan_device,
             &vulkan_ctx.vulkan_swapchain,
             &vertex_shader.shader_info,
@@ -266,6 +251,8 @@ impl VKRenderer<'_> {
             pipeline,
             pipeline_layout,
 
+            descriptor_layout,
+
             vertices_len,
         })
     }
@@ -283,6 +270,8 @@ impl VKRenderer<'_> {
                 vk_device,
                 vk_ctx.vulkan_swapchain.images[render_info.img_aquired_index as usize],
                 vk_ctx.vulkan_swapchain.image_views[render_info.img_aquired_index as usize],
+                vk_ctx.vulkan_swapchain.depth_image,
+                vk_ctx.vulkan_swapchain.depth_image_view,
                 vk_ctx.vulkan_swapchain.image_extent,
                 self.pipeline,
                 self.vertex_buffer,
@@ -329,6 +318,8 @@ impl VKRenderer<'_> {
         vk_device: &VKDevice,
         image: vk::Image,
         image_view: vk::ImageView,
+        depth_image: vk::Image,
+        depth_image_view: vk::ImageView,
         render_area: vk::Extent2D,
         pipeline: vk::Pipeline,
         vertex_buffer: vk::Buffer,
@@ -341,19 +332,44 @@ impl VKRenderer<'_> {
             .level_count(1)
             .layer_count(1);
 
+        let sub_resource_range_depth = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+            .level_count(1)
+            .layer_count(1);
         // memory barriar info for rendering
         // we use memory barriars to transistion the image into the correct layout
         // this is for transitioning the layout to the required layout for screen clear cmd
-        let image_memory_barriers = [vk::ImageMemoryBarrier2::default()
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(
-                vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::COLOR_ATTACHMENT_READ,
-            )
-            .image(image)
-            .subresource_range(sub_resource_range)];
+        // also transitions depth image to correct layout
+        let image_memory_barriers = [
+            vk::ImageMemoryBarrier2::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(
+                    vk::AccessFlags2::COLOR_ATTACHMENT_WRITE
+                        | vk::AccessFlags2::COLOR_ATTACHMENT_READ,
+                )
+                .image(image)
+                .subresource_range(sub_resource_range),
+            vk::ImageMemoryBarrier2::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                .src_stage_mask(
+                    vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                )
+                .dst_stage_mask(
+                    vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                )
+                .dst_access_mask(
+                    vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
+                        | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
+                )
+                .image(depth_image)
+                .subresource_range(sub_resource_range_depth),
+        ];
 
         // memory barriar info for present
         // we use memory barriars to transistion the image into the correct layout
@@ -377,6 +393,7 @@ impl VKRenderer<'_> {
         let mut clear_value = vk::ClearValue::default();
         clear_value.color = vk::ClearColorValue::default();
         clear_value.color.float32 = [0.74757, 0.02016, 0.253, 1.0];
+        // clear_value.color.float32 = [0.0, 0.0, 0.0, 1.0];
 
         let color_attachments = [vk::RenderingAttachmentInfo::default()
             .image_view(image_view)
@@ -385,12 +402,19 @@ impl VKRenderer<'_> {
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(clear_value)];
 
+        let depth_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(depth_image_view)
+            .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE);
+
         let render_area_extent = vk::Rect2D::default()
             .extent(render_area)
             .offset(vk::Offset2D::default().x(0).y(0));
 
         let rendering_info = vk::RenderingInfo::default()
             .color_attachments(&color_attachments)
+            .depth_attachment(&depth_attachment)
             .layer_count(1)
             .render_area(render_area_extent);
 
@@ -464,13 +488,17 @@ impl Drop for VKRenderer<'_> {
                 .device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
 
+            self.vulkan_ctx
+                .vulkan_device
+                .device
+                .destroy_descriptor_set_layout(self.descriptor_layout, None);
+
             // need to move it out of &mut self so it can be freed by memory allocator, achieved by replacing with empty Allocation
             let vertex_allocation = std::mem::take(&mut self.vertex_allocation);
 
             self.vulkan_ctx
+                .vulkan_device
                 .mem_allocator
-                .as_mut()
-                .unwrap()
                 .free(vertex_allocation)
                 .unwrap_unchecked();
 
@@ -497,12 +525,12 @@ impl Drop for VKRenderer<'_> {
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 struct Vertex {
-    pos: Vec2,
+    pos: Vec3,
     color: Vec3,
 }
 
 impl Vertex {
-    const fn new(pos: Vec2, color: Vec3) -> Self {
+    const fn new(pos: Vec3, color: Vec3) -> Self {
         Self { pos, color }
     }
 
@@ -519,13 +547,13 @@ impl Vertex {
         let pos = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(0)
-            .format(vk::Format::R32G32_SFLOAT)
+            .format(vk::Format::R32G32B32_SFLOAT)
             .offset(0);
         let color = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(size_of::<Vec2>() as u32);
+            .offset(size_of::<Vec3>() as u32);
         [pos, color]
     }
 }
@@ -533,21 +561,28 @@ impl Vertex {
 // Repr C here so that rust does not change the order on compile and it is what vulkan expects
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct ViewProjection {
-    projection: Mat4,
+struct CameraTransforms {
+    view_projection: Mat4,
 }
 
-impl ViewProjection {
-    fn new(fov: f32, aspect_ratio: f32, z_near: f32) -> Self {
-        let projection = Mat4::perspective_infinite_reverse_lh(fov, aspect_ratio, z_near);
-        Self { projection }
+impl CameraTransforms {
+    fn new(
+        fov: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+        rotation: glam::Quat,
+        translation: Vec3,
+    ) -> Self {
+        let projection = Mat4::perspective_infinite_reverse_rh(fov, aspect_ratio, z_near);
+        let transform = Mat4::from_rotation_translation(rotation, translation).inverse();
+        let view_projection = projection * transform;
+        Self { view_projection }
     }
 }
 
 // this is just for learning it will be split up and organised and made more universal/generic.
 fn create_vertex_buffer(
-    vk_device: &VKDevice,
-    gpu_allocator: &mut vulkan::Allocator,
+    vk_device: &mut VKDevice,
     vk_command_pool: &vk::CommandPool,
     vertices: &[Vertex],
 ) -> Result<(vk::Buffer, vulkan::Allocation), vk::Result> {
@@ -568,7 +603,8 @@ fn create_vertex_buffer(
 
     // allocate memory for staging buffer
 
-    let mut staging_allocation = gpu_allocator
+    let mut staging_allocation = vk_device
+        .mem_allocator
         .allocate(&vulkan::AllocationCreateDesc {
             name: "Vertecies Staging",
             requirements: requirments,
@@ -618,7 +654,8 @@ fn create_vertex_buffer(
 
     // allocate memory for vertex buffer
 
-    let vertices_allocation = gpu_allocator
+    let vertices_allocation = vk_device
+        .mem_allocator
         .allocate(&vulkan::AllocationCreateDesc {
             name: "Vertices",
             requirements: requirments,
@@ -681,7 +718,7 @@ fn create_vertex_buffer(
     }
 
     // clean up staging buffer as we no longer need it
-    gpu_allocator.free(staging_allocation).unwrap();
+    vk_device.mem_allocator.free(staging_allocation).unwrap();
 
     unsafe {
         vk_device.device.destroy_buffer(staging_buffer, None);
@@ -695,7 +732,7 @@ fn create_pipeline(
     vk_swapchain: &VKSwapchain,
     vertex_stage: &vk::PipelineShaderStageCreateInfo,
     fragment_stage: &vk::PipelineShaderStageCreateInfo,
-) -> Result<(vk::Pipeline, vk::PipelineLayout), vk::Result> {
+) -> Result<(vk::Pipeline, vk::PipelineLayout, vk::DescriptorSetLayout), vk::Result> {
     // we wan't the viewport and scissor to be dynamic so that we don't have to recreat the pipeline when the window size changes
     let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
         .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
@@ -730,7 +767,15 @@ fn create_pipeline(
         .sample_shading_enable(false)
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-    // no depth test code as not needed yet
+    // depth test
+    // Greater_or_Equal is used because we are using a reversed depth buffer
+
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
+        .depth_compare_op(CompareOp::GREATER_OR_EQUAL)
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_bounds_test_enable(false)
+        .stencil_test_enable(false);
 
     //blending disabled Probably need alpha blending later
     let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
@@ -743,7 +788,8 @@ fn create_pipeline(
     let color_attachment_formats = [vk_swapchain.capibilities.ideal_surface_format().format];
 
     let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
-        .color_attachment_formats(&color_attachment_formats);
+        .color_attachment_formats(&color_attachment_formats)
+        .depth_attachment_format(vk::Format::D32_SFLOAT);
 
     // Move out of here
     // this is the descriptor layout for the uniform buffer that contains the view prjoction matrix
@@ -757,13 +803,15 @@ fn create_pipeline(
     let descriptor_layout_info =
         vk::DescriptorSetLayoutCreateInfo::default().bindings(&uniform_buffer_desc);
 
-    let descriptor_layout = [unsafe {
+    let descriptor_layout = unsafe {
         vk_device
             .device
             .create_descriptor_set_layout(&descriptor_layout_info, None)?
-    }];
+    };
 
-    let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_layout);
+    let descriptor_layouts = [descriptor_layout];
+
+    let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_layouts);
 
     let pipeline_layout = unsafe {
         vk_device
@@ -780,6 +828,7 @@ fn create_pipeline(
         .viewport_state(&viewport_state)
         .rasterization_state(&rasterization_state)
         .multisample_state(&multisample_state)
+        .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blend_state)
         .layout(pipeline_layout)
         .push_next(&mut rendering_info)
@@ -795,7 +844,7 @@ fn create_pipeline(
         // the result of create_graphics_pipeline can include the pipeleines that did get sucesfully created.
         // this match statement just ignores that ant returns error if any of them fail
         match pipline_result {
-            Ok(pipeline) => Ok((pipeline[0], pipeline_layout)),
+            Ok(pipeline) => Ok((pipeline[0], pipeline_layout, descriptor_layout)),
             Err(error) => Err(error.1),
         }
     }

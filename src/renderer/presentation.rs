@@ -4,6 +4,7 @@ use ash::{
     khr::{surface, swapchain},
     vk::{self, Handle},
 };
+use gpu_allocator::vulkan;
 use log::warn;
 use std::error;
 use winit::{
@@ -158,10 +159,12 @@ impl VKSwapchainCapabilities {
 }
 
 pub struct VKSwapchain {
-    // Swapchain starts of as none, can also be invalidated by setting to None ie window Resize
     pub swapchain: vk::SwapchainKHR,
     pub image_views: Vec<vk::ImageView>,
     pub images: Vec<vk::Image>,
+    pub depth_image_view: vk::ImageView,
+    pub depth_image: vk::Image,
+    pub depth_allocation: vulkan::Allocation,
     pub image_extent: vk::Extent2D,
     pub swapchain_loader: swapchain::Device,
     pub capibilities: VKSwapchainCapabilities,
@@ -170,7 +173,7 @@ pub struct VKSwapchain {
 impl VKSwapchain {
     pub fn new(
         vk_instance: &VKInstance,
-        vk_device: &VKDevice,
+        vk_device: &mut VKDevice,
         vk_surface: &VKSurface,
         window: &Window,
         vk_swapchain_old: Option<vk::SwapchainKHR>,
@@ -209,13 +212,34 @@ impl VKSwapchain {
 
         let images = unsafe { swapchain_loader.get_swapchain_images(swapchain)? };
 
-        let image_views =
-            Self::create_image_views(&images, ideal_surface_format.format, vk_device)?;
+        let image_views = Self::create_image_views(
+            &images,
+            ideal_surface_format.format,
+            vk_device,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+
+        let (depth_image, depth_allocation) = vk_device.create_image(
+            image_extent,
+            vk::Format::D32_SFLOAT,
+            vk::ImageTiling::OPTIMAL,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            gpu_allocator::MemoryLocation::GpuOnly,
+        )?;
+
+        let depth_image_view = vk_device.create_image_view(
+            depth_image,
+            vk::Format::D32_SFLOAT,
+            vk::ImageAspectFlags::DEPTH,
+        )?;
 
         Ok(Self {
             swapchain,
             image_views,
             images,
+            depth_image_view,
+            depth_image,
+            depth_allocation,
             image_extent,
             swapchain_loader,
             capibilities,
@@ -223,49 +247,33 @@ impl VKSwapchain {
     }
 
     fn create_image_views(
-        swapchain_images: &[vk::Image],
+        vk_images: &[vk::Image],
         image_format: vk::Format,
         vk_device: &VKDevice,
+        aspect_mask: vk::ImageAspectFlags,
     ) -> Result<Vec<vk::ImageView>, vk::Result> {
-        Ok(swapchain_images
+        Ok(vk_images
             .iter()
-            .map(|image| {
-                let image_view_create_info = vk::ImageViewCreateInfo::default()
-                    .image(*image)
-                    .view_type(vk::ImageViewType::TYPE_2D) // it is a 2d image
-                    .format(image_format) // the colour format matches the swapchain
-                    .components(
-                        vk::ComponentMapping::default()
-                            .r(vk::ComponentSwizzle::IDENTITY)
-                            .g(vk::ComponentSwizzle::IDENTITY)
-                            .b(vk::ComponentSwizzle::IDENTITY)
-                            .a(vk::ComponentSwizzle::IDENTITY),
-                    ) // no components are Swizzled aka swapped or changed
-                    .subresource_range(
-                        vk::ImageSubresourceRange::default()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .base_mip_level(0)
-                            .level_count(1)
-                            .base_array_layer(0)
-                            .layer_count(1),
-                    ); // 1 colour resource spanning the whole image
-                unsafe {
-                    vk_device
-                        .device
-                        .create_image_view(&image_view_create_info, None)
-                }
-            })
+            .map(|image| vk_device.create_image_view(*image, image_format, aspect_mask))
             .collect::<Result<Vec<vk::ImageView>, vk::Result>>())?
     }
 
     /// # Safety
     /// Destroy Before Vulkan Device
     /// Read VK Docs For Destruction Order
-    pub unsafe fn destroy(&mut self, vk_device: &VKDevice) {
+    pub unsafe fn destroy(&mut self, vk_device: &mut VKDevice) {
         unsafe {
             self.image_views
                 .iter()
                 .for_each(|iv| vk_device.device.destroy_image_view(*iv, None));
+            vk_device
+                .device
+                .destroy_image_view(self.depth_image_view, None);
+            vk_device
+                .mem_allocator
+                .free(std::mem::take(&mut self.depth_allocation))
+                .unwrap_unchecked();
+            vk_device.device.destroy_image(self.depth_image, None);
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
         }
@@ -275,7 +283,7 @@ impl VKSwapchain {
     pub fn rebuild_swapchain(
         &mut self,
         vk_instance: &VKInstance,
-        vk_device: &VKDevice,
+        vk_device: &mut VKDevice,
         vk_surface: &VKSurface,
         window: &Window,
     ) -> Result<(), vk::Result> {
@@ -341,7 +349,7 @@ impl VKPresent {
     }
 
     /// Sets max frames in flight 2 is a good number
-    /// Should not be higher than the number of images in the swapchain
+    /// Will clamp to number of images in swapchain
     ///# Safety
     /// Recreats Sync Objects by destroying
     /// Don't Destroy Vulkan Device before/while using
@@ -352,8 +360,13 @@ impl VKPresent {
         vk_ctx: &VKContext,
     ) -> Result<Self, vk::Result> {
         self.max_frames = frames;
+        if self.max_frames > vk_ctx.vulkan_swapchain.images.len() as u32 {
+            self.max_frames = vk_ctx.vulkan_swapchain.images.len() as u32
+        }
         self.frame %= self.max_frames;
-        unsafe { self.recreate_sync(vk_ctx) }
+        self.img_aquired_index = (vk_ctx.vulkan_swapchain.images.len() as u32) - 1;
+        unsafe { self.recreate_sync(vk_ctx)? };
+        Ok(self)
     }
 
     /// returns aquired image and semaphore
@@ -371,7 +384,7 @@ impl VKPresent {
 
         let img_aquired_gpu = *self
             .img_aquired_gpu
-            .get(self.frame as usize)
+            .get(self.img_aquired_index as usize)
             .ok_or(vk::Result::INCOMPLETE)?;
 
         // wait on cpu for currently rendering frame to finish
@@ -383,7 +396,6 @@ impl VKPresent {
         }
 
         // request img from swapchain
-        // _ is type bool for suboptimal or invalid swapchain
         let (img_index, img_suboptimal) = unsafe {
             vk_ctx
                 .vulkan_swapchain
@@ -477,31 +489,37 @@ impl VKPresent {
         if self.swap_invalid {
             let rebuild_status = vk_ctx.vulkan_swapchain.rebuild_swapchain(
                 &vk_ctx.vulkan_instance,
-                &vk_ctx.vulkan_device,
+                &mut vk_ctx.vulkan_device,
                 &vk_ctx.vulkan_surface,
                 &window,
             );
 
             if rebuild_status.is_ok() {
                 self.swap_invalid = false;
+                unsafe {
+                    self.recreate_sync(vk_ctx)?;
+                    self.img_aquired_index = (vk_ctx.vulkan_swapchain.images.len() as u32) - 1;
+                }
             }
         }
         Ok(())
     }
 
     /// Recreates Sync Objects Such as Semaphores and Fences
-    unsafe fn recreate_sync(mut self, vk_ctx: &VKContext) -> Result<Self, vk::Result> {
+    unsafe fn recreate_sync(&mut self, vk_ctx: &VKContext) -> Result<(), vk::Result> {
         unsafe {
             let vk_device = &vk_ctx.vulkan_device;
             self.destroy(vk_ctx);
 
-            for _ in 0..self.max_frames {
-                let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+            for _ in &vk_ctx.vulkan_swapchain.images {
                 let img_semaphore = vk_device
                     .device
                     .create_semaphore(&semaphore_create_info, None)?;
                 self.img_aquired_gpu.push(img_semaphore);
+            }
 
+            for _ in 0..self.max_frames {
                 let renderd_semaphore = vk_device
                     .device
                     .create_semaphore(&semaphore_create_info, None)?;
@@ -514,7 +532,7 @@ impl VKPresent {
             }
         }
 
-        Ok(self)
+        Ok(())
     }
 
     /// marks swap invalid
