@@ -274,6 +274,7 @@ impl VKRenderer<'_> {
                 vk_ctx.vulkan_swapchain.depth_image_view,
                 vk_ctx.vulkan_swapchain.image_extent,
                 self.pipeline,
+                self.pipeline_layout,
                 self.vertex_buffer,
                 self.vertices_len,
             )
@@ -322,6 +323,7 @@ impl VKRenderer<'_> {
         depth_image_view: vk::ImageView,
         render_area: vk::Extent2D,
         pipeline: vk::Pipeline,
+        pipeline_layout: vk::PipelineLayout,
         vertex_buffer: vk::Buffer,
         vertices_len: u32,
     ) -> Result<(), ash::vk::Result> {
@@ -426,7 +428,20 @@ impl VKRenderer<'_> {
             .min_depth(0.0)
             .max_depth(1.0)];
 
+        let camera_mat = CameraTransforms::new(
+            90.0_f32.to_radians(),
+            render_area.width as f32 / render_area.height as f32,
+            0.1_f32,
+            glam::Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), 45_f32.to_radians()),
+            Vec3::new(0.0, 0.0, 1.0),
+        );
+
         unsafe {
+            let camera_mat_bytes = std::slice::from_raw_parts(
+                &camera_mat as *const CameraTransforms as *const u8,
+                size_of::<CameraTransforms>(),
+            );
+
             vk_device
                 .device
                 .begin_command_buffer(cmd_buffer, &begin_info)
@@ -455,6 +470,14 @@ impl VKRenderer<'_> {
             vk_device
                 .device
                 .cmd_set_scissor(cmd_buffer, 0, &[render_area_extent]);
+
+            vk_device.device.cmd_push_constants(
+                cmd_buffer,
+                pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                camera_mat_bytes,
+            );
 
             vk_device.device.cmd_draw(cmd_buffer, vertices_len, 1, 0, 0);
 
@@ -811,7 +834,14 @@ fn create_pipeline(
 
     let descriptor_layouts = [descriptor_layout];
 
-    let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_layouts);
+    let push_constant_ranges = [vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .offset(0)
+        .size(std::mem::size_of::<CameraTransforms>() as u32)];
+
+    let layout_info = vk::PipelineLayoutCreateInfo::default()
+        .set_layouts(&descriptor_layouts)
+        .push_constant_ranges(&push_constant_ranges);
 
     let pipeline_layout = unsafe {
         vk_device
