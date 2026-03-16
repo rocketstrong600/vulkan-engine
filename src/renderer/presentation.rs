@@ -5,7 +5,6 @@ use ash::{
     vk::{self, Handle},
 };
 use gpu_allocator::vulkan;
-use log::warn;
 use std::error;
 use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
@@ -371,7 +370,12 @@ impl VKPresent {
 
     /// returns aquired image and semaphore
     /// for when image is ready
-    pub fn aquire_img(&mut self, vk_ctx: &VKContext) -> Result<ToRenderInfo, vk::Result> {
+    #[must_use]
+    pub fn aquire_img(
+        &mut self,
+        vk_ctx: &mut VKContext,
+        window: &Window,
+    ) -> Result<ToRenderInfo, vk::Result> {
         let img_rendered_cpu = *self
             .img_rendered_cpu
             .get(self.frame as usize)
@@ -396,30 +400,39 @@ impl VKPresent {
         }
 
         // request img from swapchain
-        let (img_index, img_suboptimal) = unsafe {
-            vk_ctx
-                .vulkan_swapchain
-                .swapchain_loader
-                .acquire_next_image(
-                    vk_ctx.vulkan_swapchain.swapchain,
-                    u64::MAX,
-                    img_aquired_gpu,
-                    vk::Fence::null(),
-                )?
+        let aquire_image_result = unsafe {
+            vk_ctx.vulkan_swapchain.swapchain_loader.acquire_next_image(
+                vk_ctx.vulkan_swapchain.swapchain,
+                u64::MAX,
+                img_aquired_gpu,
+                vk::Fence::null(),
+            )
         };
 
-        // if swapchain is invalid
-        if img_suboptimal {
-            warn!("Swapchain Suboptimal");
-
-            self.swap_invalid = true;
+        match aquire_image_result {
+            Ok((img_index, subopt)) => {
+                self.img_aquired_index = img_index;
+                if subopt {
+                    self.swap_invalid = true;
+                    // unsafe { self.invalid_rebuild_swap(vk_ctx, window)? };
+                    // return Err(vk::Result::ERROR_OUT_OF_DATE_KHR);
+                }
+            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                self.swap_invalid = true;
+                unsafe { self.invalid_rebuild_swap(vk_ctx, window)? };
+                return Err(vk::Result::ERROR_OUT_OF_DATE_KHR);
+            }
+            Err(error) => {
+                unsafe { self.invalid_rebuild_swap(vk_ctx, window)? };
+                return Err(error);
+            }
         }
 
         // Store the aquired image index for presentation
-        self.img_aquired_index = img_index;
 
         // Waits on Swapchain img in use, usually only occurs if the swapchain hands us a img out of order
-        if let Some(img_in_flight) = self.img_in_flight.get(img_index as usize) {
+        if let Some(img_in_flight) = self.img_in_flight.get(self.img_aquired_index as usize) {
             if !img_in_flight.is_null() {
                 unsafe {
                     vk_ctx.vulkan_device.device.wait_for_fences(
@@ -432,13 +445,13 @@ impl VKPresent {
         }
 
         // grow img_in_flight to value at img_index
-        if (img_index as usize) >= self.img_in_flight.len() {
+        if (self.img_aquired_index as usize) >= self.img_in_flight.len() {
             self.img_in_flight
-                .resize((img_index as usize) + 1, vk::Fence::null());
+                .resize((self.img_aquired_index as usize) + 1, vk::Fence::null());
         }
 
         // associates our in flight fence with an image on the swapchain
-        self.img_in_flight[img_index as usize] = img_rendered_cpu;
+        self.img_in_flight[self.img_aquired_index as usize] = img_rendered_cpu;
 
         // make sure fence is not signaled before command buffer would be submitted
         unsafe {
@@ -451,7 +464,7 @@ impl VKPresent {
         Ok(ToRenderInfo {
             frame_in_flight: self.frame,
             img_aquired_gpu,
-            img_aquired_index: img_index,
+            img_aquired_index: self.img_aquired_index,
             done_rendering_cpu: img_rendered_cpu,
             done_rendering_gpu: img_rendered_gpu,
         })
@@ -461,6 +474,8 @@ impl VKPresent {
     /// and then submits frame
     /// image_index is index of image obtained from aquire_image
     /// if swap is invalid it will be recreated
+
+    #[must_use]
     pub fn present_frame(
         &mut self,
         vk_ctx: &mut VKContext,
@@ -478,14 +493,41 @@ impl VKPresent {
             .wait_semaphores(semaphores)
             .image_indices(image_indices);
 
-        unsafe {
+        let img_suboptimal = unsafe {
             vk_ctx
                 .vulkan_swapchain
                 .swapchain_loader
-                .queue_present(vk_ctx.vulkan_device.graphics_queue, &present_info)?;
+                .queue_present(vk_ctx.vulkan_device.graphics_queue, &present_info)
+        };
+
+        match img_suboptimal {
+            Ok(subopt) => {
+                if subopt {
+                    self.swap_invalid = true;
+                }
+                unsafe { self.invalid_rebuild_swap(vk_ctx, window)? };
+            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                self.swap_invalid = true;
+                unsafe { self.invalid_rebuild_swap(vk_ctx, window)? };
+                return Err(vk::Result::ERROR_OUT_OF_DATE_KHR);
+            }
+            Err(error) => {
+                unsafe { self.invalid_rebuild_swap(vk_ctx, window)? };
+                return Err(error);
+            }
         }
+
         self.frame = (self.frame + 1) % self.max_frames;
 
+        Ok(())
+    }
+
+    unsafe fn invalid_rebuild_swap(
+        &mut self,
+        vk_ctx: &mut VKContext,
+        window: &Window,
+    ) -> Result<(), vk::Result> {
         if self.swap_invalid {
             let rebuild_status = vk_ctx.vulkan_swapchain.rebuild_swapchain(
                 &vk_ctx.vulkan_instance,

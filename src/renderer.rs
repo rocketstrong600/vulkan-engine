@@ -9,11 +9,13 @@ use ash::vk::{CommandBufferUsageFlags, CompareOp, PolygonMode, ShaderStageFlags}
 use ash::{Entry, Instance, vk};
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan;
+use log::error;
+use log::warn;
 use presser;
+use std::error;
 
 use presentation::{VKSurface, VKSwapchain};
 use shader::{VKShader, VKShaderLoader};
-use std::error;
 use std::ffi::c_char;
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::Window;
@@ -304,9 +306,20 @@ impl VKRenderer<'_> {
     pub fn render(&mut self, window: &Window) {
         let vk_ctx = &mut self.vulkan_ctx;
         let vk_present = &mut self.vulkan_present;
-        let vk_device = &vk_ctx.vulkan_device;
 
-        let render_info = vk_present.aquire_img(vk_ctx).unwrap();
+        let render_info = match vk_present.aquire_img(vk_ctx, window) {
+            Ok(render_info) => render_info,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                warn!("Swap Out of Date");
+                return;
+            }
+            Err(err) => {
+                error!("Error aquiring fame from swapchain: {}", err);
+                return;
+            }
+        };
+
+        let vk_device = &vk_ctx.vulkan_device;
 
         unsafe {
             Self::record_cmd_buffer(
@@ -355,7 +368,15 @@ impl VKRenderer<'_> {
         // required for wayland
         window.pre_present_notify();
 
-        vk_present.present_frame(vk_ctx, window).unwrap();
+        match vk_present.present_frame(vk_ctx, window) {
+            Ok(_) => (),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                warn!("Swap Out of Date");
+            }
+            Err(err) => {
+                error!("Error Presenting Frame: {}", err)
+            }
+        }
     }
 
     unsafe fn record_cmd_buffer(
