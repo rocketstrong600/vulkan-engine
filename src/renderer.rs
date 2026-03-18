@@ -163,6 +163,8 @@ pub struct VKRenderer<'a> {
     pub descriptor_layout: vk::DescriptorSetLayout,
 
     pub vertices_len: u32,
+
+    pub created_time: std::time::Instant,
 }
 
 impl VKRenderer<'_> {
@@ -282,6 +284,8 @@ impl VKRenderer<'_> {
             &fragment_shader.shader_info,
         )?;
 
+        let created_time = std::time::Instant::now();
+
         Ok(Self {
             vulkan_ctx,
             vulkan_shader_loader,
@@ -300,6 +304,7 @@ impl VKRenderer<'_> {
             descriptor_layout,
 
             vertices_len,
+            created_time,
         })
     }
 
@@ -334,6 +339,7 @@ impl VKRenderer<'_> {
                 self.pipeline_layout,
                 self.vertex_buffer,
                 self.vertices_len,
+                self.created_time,
             )
             .unwrap();
         }
@@ -391,6 +397,7 @@ impl VKRenderer<'_> {
         pipeline_layout: vk::PipelineLayout,
         vertex_buffer: vk::Buffer,
         vertices_len: u32,
+        created_time: std::time::Instant,
     ) -> Result<(), ash::vk::Result> {
         let begin_info = vk::CommandBufferBeginInfo::default();
 
@@ -495,17 +502,26 @@ impl VKRenderer<'_> {
 
         let aspect_ratio = render_area.width as f32 / render_area.height as f32;
 
+        let speed: f32 = 10.0; // speed deg per second
+
+        let yaw: f32 = created_time.elapsed().as_secs_f32() * speed % 360.0; // Rotation around the target
+        let pitch: f32 = -20.0; // Angle looking down
+        let radius: f32 = 2.5; // Distance from the target
+        let target_point = Vec3::new(0.0, 0.2, 0.0); // The point you want to orbit
+
+        let spin_around = Mat4::from_translation(target_point)
+            * Mat4::from_rotation_y(yaw.to_radians())
+            * Mat4::from_rotation_x(pitch.to_radians())
+            * Mat4::from_translation(Vec3::new(0.0, 0.0, radius));
+
+        let (_, rotation, translation) = spin_around.to_scale_rotation_translation();
+
         let camera_mat = CameraTransforms::new(
-            110.0_f32.to_radians(),
+            100.0_f32.to_radians(),
             aspect_ratio,
             0.1_f32,
-            glam::Quat::from_euler(
-                glam::EulerRot::YXZ,
-                45_f32.to_radians(),
-                -30_f32.to_radians(),
-                0_f32.to_radians(),
-            ),
-            Vec3::new(1.5, 1.0, 1.5),
+            rotation,
+            translation,
         );
 
         unsafe {
@@ -855,8 +871,8 @@ fn create_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::FRONT)
-        .front_face(vk::FrontFace::CLOCKWISE)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()

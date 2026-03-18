@@ -378,9 +378,10 @@ impl<'a> VKDeviceRequirments<'a> {
             let mut suported = queue_prop.1.queue_flags.contains(self.required_queue_flags);
             // if we got passed a surface Requirment Check it is Supported
             if let Some(surface_req) = surface_requirment {
-                suported |= surface_req
-                    .queue_supports_surface(*physical_device, queue_prop.0 as u32)
-                    .unwrap_or(false);
+                suported = suported
+                    && surface_req
+                        .queue_supports_surface(*physical_device, queue_prop.0 as u32)
+                        .unwrap_or(false);
             }
             if let Some(queue_index) = checked_queue.as_mut() {
                 if suported {

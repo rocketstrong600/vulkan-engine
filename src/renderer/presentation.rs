@@ -115,20 +115,16 @@ impl VKSwapchainCapabilities {
 
     // Tries to return number of images for tripple buffering if that does not work then tries double buffering else min
     pub fn ideal_n_images(&self) -> u32 {
-        let mut image_count = self.surface_capibilities.min_image_count;
+        let mut image_count = 3;
 
-        if self.surface_capibilities.min_image_count <= 3 {
-            if self.surface_capibilities.max_image_count >= 3
-                || self.surface_capibilities.max_image_count == 0
-            {
-                image_count = 3
-            } else if self.surface_capibilities.max_image_count >= 2
-                || self.surface_capibilities.max_image_count == 0
-            {
-                image_count = 2
-            }
+        if self.surface_capibilities.max_image_count == 0 {
+            image_count = image_count.max(self.surface_capibilities.min_image_count);
+        } else {
+            image_count = image_count.clamp(
+                self.surface_capibilities.min_image_count,
+                self.surface_capibilities.max_image_count,
+            );
         }
-
         image_count
     }
 
